@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private var service: MeshService? by mutableStateOfHolder()
     private var bound = false
     private val repository = RealMeshRepository()
+    private val cardStore by lazy { dev.spandan.app.ui.PersonalCardStore(this) }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -76,6 +77,7 @@ class MainActivity : ComponentActivity() {
                     AppRoot(
                         service = service,
                         repository = repository,
+                        cardStore = cardStore,
                         onStart = { startMesh() },
                         onStop = { stopMesh() },
                     )
@@ -121,9 +123,17 @@ class MainActivity : ComponentActivity() {
  * every commit in the meantime.
  */
 @Composable
-private fun AppRoot(service: MeshService?, repository: RealMeshRepository, onStart: () -> Unit, onStop: () -> Unit) {
+private fun AppRoot(
+    service: MeshService?,
+    repository: RealMeshRepository,
+    cardStore: dev.spandan.app.ui.PersonalCardStore,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
     var showDevPanel by remember { mutableStateOf(false) }
     var showMessages by remember { mutableStateOf(false) }
+    var showCard by remember { mutableStateOf(false) }
+    var card by remember { mutableStateOf(cardStore.load()) }
     var started by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -174,6 +184,13 @@ private fun AppRoot(service: MeshService?, repository: RealMeshRepository, onSta
                     color = androidx.compose.ui.graphics.Color.White,
                 )
             }
+            showCard -> {
+                dev.spandan.app.ui.screens.PersonalCardScreen(
+                    card = card,
+                    onSave = { updated -> card = updated; cardStore.save(updated) },
+                    onBack = { showCard = false },
+                )
+            }
             else -> {
                 SosStatusScreen(
                     state = uiState,
@@ -188,6 +205,14 @@ private fun AppRoot(service: MeshService?, repository: RealMeshRepository, onSta
                         .padding(8.dp)
                         .clickable { showMessages = true },
                     color = if (unreadCount > 0) androidx.compose.ui.graphics.Color.White else androidx.compose.ui.graphics.Color.Gray,
+                )
+                Text(
+                    "My card",
+                    modifier = Modifier
+                        .align(androidx.compose.ui.Alignment.BottomStart)
+                        .padding(8.dp)
+                        .clickable { showCard = true },
+                    color = androidx.compose.ui.graphics.Color.Gray,
                 )
                 Text(
                     "dev",

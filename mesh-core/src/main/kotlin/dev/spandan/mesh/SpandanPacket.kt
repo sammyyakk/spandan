@@ -80,8 +80,14 @@ data class SpandanPacket(
         require(hopCount in 0..15) { "hopCount out of 4-bit range: $hopCount" }
     }
 
-    /** Dedup identity: the pair actually needs to be collision-resistant, not msgId alone. */
-    fun dedupKey(): Long = (originId.toLong() shl 16) or msgId.toLong()
+    /**
+     * Dedup identity: (msgType, originId, msgId). msgType must be part of the key —
+     * an ACK reuses the SOS's originId/msgId on purpose (it's "for that SOS"), so
+     * without msgType every node that already cached the SOS would see the ACK's
+     * key as a duplicate and drop it before it could ever propagate.
+     */
+    fun dedupKey(): Long =
+        (msgType.bits.toLong() shl 32) or (originId.toLong() shl 16) or msgId.toLong()
 
     fun encode(): ByteArray {
         val w = BitWriter(PACKET_SIZE_BYTES)

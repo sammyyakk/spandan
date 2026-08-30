@@ -117,6 +117,12 @@ reserved/zero. This means ack routing is just "does this node recognize
 origin_id/msg_id as one it's seen and cares about" — no separate ack-routing table
 needed beyond the existing seen-packet cache.
 
+**Correctness note:** because an ACK deliberately reuses the SOS's `origin_id`
+and `msg_id`, the dedup key **must** include `msg_type` — `dedupKey() =
+(msgType << 32) | (originId << 16) | msgId`. Without `msgType` in the key, every
+node that already cached the SOS would see the ACK's key as an existing duplicate
+and drop it on arrival, and the ack could never propagate back through the mesh.
+
 ## Dedup, cache, relay (Stage 3+)
 
 - Seen-packet cache keyed on `(origin_id, msg_id)`, bounded size, in `:mesh-core`.
@@ -171,6 +177,30 @@ local.properties` on a new machine). Gradle 8.9 via the committed wrapper.
   `:mesh-sim` module if it grows beyond test-scope) — N virtual nodes, configurable
   adjacency graph and packet loss, drives the exact same relay/dedup/election code
   the app uses.
+
+## mesh-core protocol layer — implemented (Stages 3, 4, 6, 7)
+
+- `Transport`/`Clock`/`Scheduler` — the three seams that let identical logic run
+  against real BLE or the fake-transport simulator.
+- `SeenPacketCache` — dedup by `dedupKey()`, lazy TTL expiry (severity-scaled),
+  pressure eviction (lowest severity first, then oldest).
+- `SeverityConfig` — `NAIVE_FLOODING` vs `WEIGHTED`, swappable at runtime on
+  `MeshNode.severityConfig` (the one-flag demo toggle Stage 4 asked for).
+- `NeighbourTracker` + `DutyCycle.advertiseIntervalMs()` — density-adaptive
+  interval widening, pure function of observed neighbour count.
+- `RoleElection` — RELAY/BEACON/DEEP_BEACON from battery bucket + motionless
+  duration; a node calls `MeshNode.updateRole(inputs)` periodically to re-evaluate.
+- `MeshNode` — the orchestrator: `originateSos()`, incoming-packet handling
+  (dedup → TTL → role-gated relay-with-jitter), gateway ack origination
+  (`isGateway = true`), and ack recognition flipping `isAcknowledged(msgId)`.
+- Fake-transport harness lives at `mesh-core/src/test/kotlin/dev/spandan/mesh/sim/`
+  (`VirtualClock`, `FakeScheduler`, `FakeMeshNetwork`) — deterministic discrete-event
+  simulation, not real sleeping, so thousands of nodes run at for-loop speed.
+- 25 tests green covering: A→B→C single relay, no-double-relay under multiple
+  paths, hop-TTL death, severity-extended reach, BEACON role refusing to relay,
+  cache eviction/expiry, neighbour-window aging, role thresholds, duty-cycle
+  cap, and the full ack round trip (including the dedup-key collision this
+  would have hit without the `msgType` fix above).
 
 ## Stage 1 — verified on real hardware (2026-08-30)
 

@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
     private var bound = false
     private val repository = RealMeshRepository()
     private val cardStore by lazy { dev.spandan.app.ui.PersonalCardStore(this) }
+    private val onboardingStore by lazy { dev.spandan.app.ui.OnboardingStore(this) }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -78,6 +79,7 @@ class MainActivity : ComponentActivity() {
                         service = service,
                         repository = repository,
                         cardStore = cardStore,
+                        onboardingStore = onboardingStore,
                         onStart = { startMesh() },
                         onStop = { stopMesh() },
                     )
@@ -127,6 +129,7 @@ private fun AppRoot(
     service: MeshService?,
     repository: RealMeshRepository,
     cardStore: dev.spandan.app.ui.PersonalCardStore,
+    onboardingStore: dev.spandan.app.ui.OnboardingStore,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -135,6 +138,11 @@ private fun AppRoot(
     var showCard by remember { mutableStateOf(false) }
     var card by remember { mutableStateOf(cardStore.load()) }
     var started by remember { mutableStateOf(false) }
+    // First launch only; skip or finish both land on the fully-functional SOS
+    // screen. No permission is requested until this resolves, since the
+    // brief requires explaining *why* before asking, not just being honest
+    // about it after.
+    var onboardingDone by remember { mutableStateOf(onboardingStore.isDone()) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -145,13 +153,8 @@ private fun AppRoot(
         }
     }
 
-    // The app opens straight to the SOS screen, nothing gates it -- so the
-    // mesh starts itself on first launch rather than waiting for a manual
-    // "Start" tap. Onboarding (which explains *why* these permissions are
-    // needed before asking) lands in a follow-up commit; for now this is a
-    // direct request, same as before.
-    LaunchedEffect(Unit) {
-        if (!started) permissionLauncher.launch(Permissions.required())
+    LaunchedEffect(onboardingDone) {
+        if (onboardingDone && !started) permissionLauncher.launch(Permissions.required())
     }
 
     val uiState by repository.uiState.collectAsState()
@@ -160,6 +163,12 @@ private fun AppRoot(
 
     androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
         when {
+            !onboardingDone -> {
+                dev.spandan.app.ui.screens.OnboardingScreen(onDone = {
+                    onboardingStore.markDone()
+                    onboardingDone = true
+                })
+            }
             showDevPanel -> {
                 SpandanScreen(service = service, onStart = onStart, onStop = onStop)
                 Text(

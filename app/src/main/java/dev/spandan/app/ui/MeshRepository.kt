@@ -89,42 +89,24 @@ class RealMeshRepository : MeshRepository {
      * RiskTrendTracker samples with a large barometric delta) so the "trend
      * outranks static severity" sort order actually has something to show.
      */
+    /**
+     * Routes through MeshService.simulateLoad(), which feeds synthetic
+     * packets into the transport's real receive path -- so this goes through
+     * MeshNode's actual dedup/TTL pipeline (and triggers real gateway acks
+     * if this node is one) rather than only faking entries in this
+     * repository's own list.
+     */
     fun simulateIncomingSignals(count: Int) {
-        val random = kotlin.random.Random.Default
-        val generated = (1..count).map {
-            val originId = random.nextInt(0, 0x10000)
-            val hazard = HazardCategory.entries.random(random)
-            val severity = random.nextInt(0, 8)
-            val makeWorsening = random.nextInt(0, 4) == 0 // ~25% of simulated signals
-            val baroValid = random.nextBoolean()
-            if (baroValid) {
-                riskTrendTracker.record(originId, true, random.nextInt(-20, 20))
-                if (makeWorsening) riskTrendTracker.record(originId, true, 60) // sharp rise in pressure -> falling fast
-            }
-            val hasFix = random.nextBoolean()
-            val packet = dev.spandan.mesh.SpandanPacket(
-                msgType = MsgType.SOS,
-                protocolVersion = 0,
-                hazardCategory = hazard,
-                severity = severity,
-                originId = originId,
-                msgId = random.nextInt(0, 0x10000),
-                location = if (hasFix) {
-                    dev.spandan.mesh.QuantizedLocation.fromDegrees(random.nextDouble(-90.0, 90.0), random.nextDouble(-180.0, 180.0))
-                } else {
-                    dev.spandan.mesh.QuantizedLocation.noFix()
-                },
-                baroValid = baroValid,
-                baroDeltaDeciHpa = if (baroValid) random.nextInt(-20, 20) else 0,
-                batteryBucket = random.nextInt(0, 8),
-                livenessBucket = random.nextInt(0, 8),
-                originTs = 0,
-                hopCount = random.nextInt(0, 6),
-            )
-            dev.spandan.app.ui.screens.ReceivedSignal(packet, System.currentTimeMillis(), acknowledged = random.nextInt(0, 3) == 0)
-        }
-        _receivedSignals.value = _receivedSignals.value + generated
+        service?.simulateLoad(count)
         appendLog("Simulated $count incoming signals")
+    }
+
+    /** Manual acknowledge from the Responder screen, independent of the automatic gateway-on-receive path. */
+    fun acknowledgeSignal(originId: Int, msgId: Int, severity: Int, hazardCategory: HazardCategory) {
+        service?.acknowledgeSignal(originId, msgId, severity, hazardCategory)
+        _receivedSignals.value = _receivedSignals.value.map {
+            if (it.packet.originId == originId && it.packet.msgId == msgId) it.copy(acknowledged = true) else it
+        }
     }
 
     // The service (not this repository) is the source of truth for whether an

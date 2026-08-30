@@ -22,6 +22,7 @@ class BleTransport(context: Context, private val burstDurationMs: Long = 1_500L)
     private var started = false
 
     var onStatus: (advertising: Boolean, scanning: Boolean, message: String) -> Unit = { _, _, _ -> }
+    private var receiveListener: ((bytes: ByteArray, rssi: Int?) -> Unit)? = null
 
     override fun send(bytes: ByteArray) {
         handler.post {
@@ -32,10 +33,21 @@ class BleTransport(context: Context, private val burstDurationMs: Long = 1_500L)
 
     override fun onReceive(listener: (bytes: ByteArray, rssi: Int?) -> Unit) {
         started = true
+        receiveListener = listener
         scanner.start(
             onEvent = { event -> listener(event.rawBytes, event.rssi) },
             onResult = { success, message -> onStatus(burstActive, success, message) },
         )
+    }
+
+    /**
+     * Dev-only: feeds bytes into the exact same path a real BLE scan result
+     * would take, so simulated load exercises MeshNode's real dedup/TTL/
+     * gateway-ack pipeline (including genuinely broadcasting real acks if
+     * this node is a gateway) instead of a shortcut that only fakes the UI.
+     */
+    fun simulateReceive(bytes: ByteArray, rssi: Int? = null) {
+        receiveListener?.invoke(bytes, rssi)
     }
 
     fun stop() {

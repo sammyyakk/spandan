@@ -2,6 +2,7 @@ package dev.spandan.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,7 +42,11 @@ data class ReceivedSignal(
 )
 
 @Composable
-fun ResponderScreen(signals: List<ReceivedSignal>, riskTrendFor: (Int) -> RiskTrend = { RiskTrend.STABLE }) {
+fun ResponderScreen(
+    signals: List<ReceivedSignal>,
+    riskTrendFor: (Int) -> RiskTrend = { RiskTrend.STABLE },
+    onAcknowledge: (ReceivedSignal) -> Unit = {},
+) {
     val pending = signals.count { !it.acknowledged }
     Column(modifier = Modifier.fillMaxSize().background(SpandanColors.ResponderSurface).padding(SpandanSpacing.md)) {
         SpandanHeadline("Responder", color = SpandanColors.OnResponderSurface)
@@ -68,14 +73,14 @@ fun ResponderScreen(signals: List<ReceivedSignal>, riskTrendFor: (Int) -> RiskTr
                         )
                     ),
                     key = { "${it.packet.originId}-${it.packet.msgId}" },
-                ) { signal -> SignalRow(signal, riskTrendFor(signal.packet.originId)) }
+                ) { signal -> SignalRow(signal, riskTrendFor(signal.packet.originId), onAcknowledge) }
             }
         }
     }
 }
 
 @Composable
-private fun SignalRow(signal: ReceivedSignal, trend: RiskTrend) {
+private fun SignalRow(signal: ReceivedSignal, trend: RiskTrend, onAcknowledge: (ReceivedSignal) -> Unit) {
     val statusColor = if (signal.acknowledged) SpandanColors.ResponderAcked else SpandanColors.ResponderPending
     Row(
         modifier = Modifier
@@ -117,10 +122,11 @@ private fun SignalRow(signal: ReceivedSignal, trend: RiskTrend) {
             }
         }
         Text(
-            if (signal.acknowledged) "ACKED" else "PENDING",
+            if (signal.acknowledged) "ACKED" else "TAP TO ACK",
             color = statusColor,
             fontSize = 18.sp,
             fontWeight = FontWeight.Black,
+            modifier = if (signal.acknowledged) Modifier else Modifier.clickable { onAcknowledge(signal) },
         )
     }
 }

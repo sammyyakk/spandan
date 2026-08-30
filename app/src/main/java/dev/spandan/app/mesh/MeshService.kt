@@ -59,6 +59,9 @@ class MeshService : Service() {
     private lateinit var locationProvider: LocationProvider
     private var sensorManager: SensorManager? = null
     private var significantMotionSensor: Sensor? = null
+    private var pressureSensor: Sensor? = null
+    private var baselinePressureHpa: Float? = null
+    private var lastPressureHpa: Float? = null
     private var lastMotionAtMillis: Long = System.currentTimeMillis()
     private var lastPendingSosMsgId: Int? = null
     private var lastPendingCategory: HazardCategory? = null
@@ -94,6 +97,7 @@ class MeshService : Service() {
         )
 
         setupMotionSensing()
+        setupBarometer()
         mainHandler.post(roleTick)
     }
 
@@ -103,6 +107,7 @@ class MeshService : Service() {
         super.onDestroy()
         mainHandler.removeCallbacks(roleTick)
         sensorManager?.unregisterListener(motionListener)
+        sensorManager?.unregisterListener(pressureListener)
         transport.stop()
     }
 
@@ -114,8 +119,8 @@ class MeshService : Service() {
             hazardCategory = hazard,
             severity = severity,
             location = locationProvider.currentLocation(),
-            baroValid = false,
-            baroDeltaDeciHpa = 0,
+            baroValid = baroDeltaDeciHpa() != null,
+            baroDeltaDeciHpa = baroDeltaDeciHpa() ?: 0,
             batteryBucket = batteryBucket,
             livenessBucket = livenessBucket(),
             phrase = phrase,
@@ -150,6 +155,11 @@ class MeshService : Service() {
     /** Gateway-only, per MeshNode.originateCommandMessage's own contract -- throws otherwise. */
     fun sendCommandMessage(message: dev.spandan.mesh.CommandMessage) {
         meshNode.originateCommandMessage(message)
+    }
+
+    /** Manual acknowledge from the Responder screen -- anyone can do this, not just an auto-gateway. */
+    fun acknowledgeSignal(originId: Int, msgId: Int, severity: Int, hazardCategory: HazardCategory) {
+        meshNode.acknowledge(originId, msgId, severity, hazardCategory)
     }
 
     fun setWeightedPropagation(enabled: Boolean) {
@@ -217,6 +227,46 @@ class MeshService : Service() {
         return "%d.%d.%d.%d".format(ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff)
     }
 
+    /**
+     * Dev-panel-only load test: feeds [count] synthetic SOS packets from
+     * distinct random origins into [transport]'s real receive path -- the
+     * exact same one a genuine BLE scan result would use. This exercises
+     * MeshNode's actual dedup/TTL/neighbour-tracking pipeline (not a UI-only
+     * shortcut), and if this node is a gateway, it will genuinely broadcast
+     * real ACKs back out over BLE for the simulated signals, same as it
+     * would for real distress calls.
+     */
+    fun simulateLoad(count: Int) {
+        val random = java.util.Random()
+        repeat(count) {
+            val originId = random.nextInt(0x10000)
+            val hazard = HazardCategory.entries[random.nextInt(HazardCategory.entries.size)]
+            val severity = random.nextInt(8)
+            val baroValid = random.nextBoolean()
+            val hasFix = random.nextBoolean()
+            val packet = dev.spandan.mesh.SpandanPacket(
+                msgType = dev.spandan.mesh.MsgType.SOS,
+                protocolVersion = 0,
+                hazardCategory = hazard,
+                severity = severity,
+                originId = originId,
+                msgId = random.nextInt(0x10000),
+                location = if (hasFix) {
+                    QuantizedLocation.fromDegrees(random.nextDouble() * 180 - 90, random.nextDouble() * 360 - 180)
+                } else {
+                    QuantizedLocation.noFix()
+                },
+                baroValid = baroValid,
+                baroDeltaDeciHpa = if (baroValid) random.nextInt(40) - 20 else 0,
+                batteryBucket = random.nextInt(8),
+                livenessBucket = random.nextInt(8),
+                originTs = 0,
+                hopCount = random.nextInt(6),
+            )
+            transport.simulateReceive(packet.encode(), rssi = -(30 + random.nextInt(70)))
+        }
+    }
+
     fun snapshot(): MeshSnapshot = MeshSnapshot(
         originId = meshNode.originId,
         role = meshNode.role,
@@ -254,6 +304,36 @@ class MeshService : Service() {
         // No significant-motion sensor on this device: we cannot detect stillness,
         // so we deliberately do not fake a reading — motionlessMillis stays 0
         // (never contributes to a false DEEP_BEACON demotion). Flagged in CLAUDE.md.
+    }
+
+    private fun setupBarometer() {
+        val sm = getSystemService(SENSOR_SERVICE) as? SensorManager ?: return
+        sensorManager = sm
+        val sensor = sm.getDefaultSensor(Sensor.TYPE_PRESSURE)
+        pressureSensor = sensor
+        if (sensor != null) {
+            sm.registerListener(pressureListener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+        // No barometer on this device: baroValid stays false forever for this
+        // node's own originated packets, never a faked zero delta -- same
+        // principle as the motion sensor above, documented in CLAUDE.md.
+    }
+
+    private val pressureListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent?) {
+            val hpa = event?.values?.firstOrNull() ?: return
+            if (baselinePressureHpa == null) baselinePressureHpa = hpa // boot-time baseline, set once
+            lastPressureHpa = hpa
+        }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+
+    /** Delta vs. this device's own boot-time baseline, in the packet's 0.1 hPa units, clamped to the 8-bit signed range. Null if no barometer. */
+    private fun baroDeltaDeciHpa(): Int? {
+        val baseline = baselinePressureHpa ?: return null
+        val current = lastPressureHpa ?: return null
+        val deltaDeciHpa = ((current - baseline) * 10).toInt()
+        return deltaDeciHpa.coerceIn(-127, 127)
     }
 
     private val motionListener = object : SensorEventListener {

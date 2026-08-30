@@ -83,58 +83,88 @@ class WifiDirectTransport(context: Context) {
         onReply: (ByteArray) -> Unit,
     ) {
         val config = android.net.wifi.p2p.WifiP2pConfig().apply { deviceAddress = device.deviceAddress }
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        // Clear any stale group left over from a previous failed/aborted
+        // attempt -- a well-documented cause of repeated Wi-Fi Direct group
+        // formation failures on real devices, fired-and-forgotten since a
+        // "no group to remove" failure here is expected and harmless.
+        mgr.removeGroup(ch, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {}
+            override fun onFailure(reason: Int) {}
+        })
+
         mgr.connect(ch, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                // Group-owner election is negotiated, not something either side
-                // picks -- a hardcoded "the owner is always 192.168.49.1" guess
-                // was wrong in testing (this device became owner at a different
-                // address). requestConnectionInfo() gives the real address.
-                mgr.requestConnectionInfo(ch) { info ->
-                    if (!info.groupFormed) {
-                        onResult(false, "group did not form")
-                        return@requestConnectionInfo
-                    }
-                    if (info.isGroupOwner) {
-                        // This device negotiated as host, not client -- it has no
-                        // one to push to (the other side would need to connect
-                        // in, which requires it to already be listening). Owner
-                        // election is effectively random per attempt; retrying
-                        // often flips it.
-                        onResult(false, "this device became the host this time -- try again")
-                        return@requestConnectionInfo
-                    }
-                    val ownerAddress = info.groupOwnerAddress
-                    if (ownerAddress == null) {
-                        onResult(false, "no host address available")
-                        return@requestConnectionInfo
-                    }
-                    Thread {
-                        runCatching {
-                            val socket = Socket()
-                            socket.connect(java.net.InetSocketAddress(ownerAddress, PORT), 8_000)
-                            val out = DataOutputStream(socket.getOutputStream())
-                            val input = DataInputStream(socket.getInputStream())
-                            out.writeInt(payload.size)
-                            out.write(payload)
-                            out.flush()
-                            val replySize = input.readInt()
-                            val reply = ByteArray(replySize)
-                            if (replySize > 0) input.readFully(reply)
-                            socket.close()
-                            if (replySize > 0) onReply(reply)
-                            onResult(true, "sent ${payload.size} bytes" + if (replySize > 0) ", received ${replySize} bytes back" else "")
-                        }.onFailure { e ->
-                            Log.w(TAG, "exchange failed", e)
-                            onResult(false, "exchange failed: ${e.message}")
-                        }
-                    }.start()
-                }
+                // connect()'s onSuccess only means the request was accepted,
+                // not that negotiation finished -- checking requestConnectionInfo
+                // immediately raced ahead of the async group formation and
+                // reported "group did not form" on hardware that would have
+                // succeeded a second later. Poll instead of checking once.
+                pollForGroupFormation(mgr, ch, handler, attemptsLeft = 10, payload, onResult, onReply)
             }
 
             override fun onFailure(reason: Int) {
                 onResult(false, "connect failed, code=$reason")
             }
         })
+    }
+
+    private fun pollForGroupFormation(
+        mgr: WifiP2pManager,
+        ch: WifiP2pManager.Channel,
+        handler: android.os.Handler,
+        attemptsLeft: Int,
+        payload: ByteArray,
+        onResult: (Boolean, String) -> Unit,
+        onReply: (ByteArray) -> Unit,
+    ) {
+        mgr.requestConnectionInfo(ch) { info ->
+            if (!info.groupFormed) {
+                if (attemptsLeft <= 0) {
+                    onResult(false, "group did not form in time")
+                    return@requestConnectionInfo
+                }
+                handler.postDelayed({ pollForGroupFormation(mgr, ch, handler, attemptsLeft - 1, payload, onResult, onReply) }, 1_000)
+                return@requestConnectionInfo
+            }
+            if (info.isGroupOwner) {
+                // This device negotiated as host, not client -- it has no one
+                // to push to (the other side would need to connect in, which
+                // requires it to already be listening). Owner election is
+                // effectively random per attempt; retrying often flips it.
+                onResult(false, "this device became the host this time -- try again")
+                return@requestConnectionInfo
+            }
+            // Group-owner election is negotiated, not something either side
+            // picks -- a hardcoded "the owner is always 192.168.49.1" guess
+            // was wrong in testing (this device became owner at a different
+            // address). requestConnectionInfo() gives the real address.
+            val ownerAddress = info.groupOwnerAddress
+            if (ownerAddress == null) {
+                onResult(false, "no host address available")
+                return@requestConnectionInfo
+            }
+            Thread {
+                runCatching {
+                    val socket = Socket()
+                    socket.connect(java.net.InetSocketAddress(ownerAddress, PORT), 8_000)
+                    val out = DataOutputStream(socket.getOutputStream())
+                    val input = DataInputStream(socket.getInputStream())
+                    out.writeInt(payload.size)
+                    out.write(payload)
+                    out.flush()
+                    val replySize = input.readInt()
+                    val reply = ByteArray(replySize)
+                    if (replySize > 0) input.readFully(reply)
+                    socket.close()
+                    if (replySize > 0) onReply(reply)
+                    onResult(true, "sent ${payload.size} bytes" + if (replySize > 0) ", received $replySize bytes back" else "")
+                }.onFailure { e ->
+                    Log.w(TAG, "exchange failed", e)
+                    onResult(false, "exchange failed: ${e.message}")
+                }
+            }.start()
+        }
     }
 
     /**

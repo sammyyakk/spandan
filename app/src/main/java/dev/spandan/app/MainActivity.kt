@@ -250,7 +250,18 @@ private fun AppRoot(
             }
             settings.responderMode -> {
                 val signals by repository.receivedSignals.collectAsState()
-                ResponderScreen(signals = signals, riskTrendFor = { originId -> repository.riskTrendFor(originId) })
+                ResponderScreen(
+                    signals = signals,
+                    riskTrendFor = { originId -> repository.riskTrendFor(originId) },
+                    onAcknowledge = { signal ->
+                        repository.acknowledgeSignal(
+                            signal.packet.originId,
+                            signal.packet.msgId,
+                            signal.packet.severity,
+                            signal.packet.hazardCategory,
+                        )
+                    },
+                )
                 Text(
                     "Settings",
                     modifier = Modifier

@@ -203,6 +203,22 @@ class MeshNodeAckPathTest {
     }
 
     @Test
+    fun `a non-gateway node can manually acknowledge a signal, propagating back to origin`() {
+        val h = Harness(symmetric(0 to 1, 1 to 2))
+        val a = h.node(0, originId = 0xA000)
+        h.node(1, originId = 0xB000)
+        val responder = h.node(2, originId = 0xC000)
+        assertFalse(responder.isGateway)
+
+        val msgId = a.originateSos(HazardCategory.TRAPPED, 6, QuantizedLocation.noFix(), false, 0, 3, 0)
+        h.advance(10_000) // let the SOS actually reach the responder first
+        responder.acknowledge(0xA000, msgId, severity = 6, hazardCategory = HazardCategory.TRAPPED)
+        h.advance(60_000)
+
+        assertTrue(a.isAcknowledged(msgId), "manual acknowledge from a non-gateway node should still reach the origin")
+    }
+
+    @Test
     fun `updateActivePhrase changes content of subsequent resends without changing msgId`() {
         val h = Harness(symmetric(0 to 1))
         val a = h.node(0, originId = 0xA000)

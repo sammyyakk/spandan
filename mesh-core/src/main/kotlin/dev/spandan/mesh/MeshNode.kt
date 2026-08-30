@@ -304,13 +304,25 @@ class MeshNode(
     }
 
     private fun originateAck(sos: SpandanPacket) {
+        acknowledge(sos.originId, sos.msgId, sos.severity, sos.hazardCategory)
+    }
+
+    /**
+     * Manually originates an ack for an arbitrary (originId, msgId) --
+     * used when a responder explicitly taps "acknowledge" on a signal in
+     * the Responder screen, independent of the automatic gateway-on-receive
+     * path in [handleIncoming]. Anyone can call this, not just a gateway
+     * node; a responder tapping acknowledge on a screen has already made
+     * the judgment call a gateway would otherwise automate.
+     */
+    fun acknowledge(originId: Int, msgId: Int, severity: Int = 0, hazardCategory: HazardCategory = HazardCategory.OTHER) {
         val ack = SpandanPacket(
             msgType = MsgType.ACK,
-            protocolVersion = sos.protocolVersion,
-            hazardCategory = sos.hazardCategory,
-            severity = sos.severity,
-            originId = sos.originId, // "this ack is for that origin"
-            msgId = sos.msgId,       // echoes the SOS's msgId
+            protocolVersion = 0,
+            hazardCategory = hazardCategory,
+            severity = severity,
+            originId = originId, // "this ack is for that origin"
+            msgId = msgId,       // echoes the SOS's msgId
             location = QuantizedLocation.noFix(),
             baroValid = false,
             baroDeltaDeciHpa = 0,

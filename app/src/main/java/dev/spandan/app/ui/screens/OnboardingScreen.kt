@@ -45,8 +45,8 @@ fun OnboardingScreen(onDone: () -> Unit) {
                     body = "When phones lose signal, they can still talk to each other. This app lets you send a distress signal that hops from phone to phone until it reaches help — no internet, no cell towers needed.",
                 )
                 1 -> OnboardingPage(
-                    title = "Bluetooth & location",
-                    body = "This app needs Bluetooth to send and receive signals, and on some phones Android requires location permission to scan for Bluetooth devices nearby. We don't use your location for anything — that's an Android requirement for scanning, not tracking.",
+                    title = "Permissions",
+                    body = "This app needs permission to talk to nearby phones so your signal can travel, and to check your location so rescuers know where you are. Your location is only ever used for that — never to track you.",
                 )
                 else -> OnboardingPage(
                     title = "Your card",

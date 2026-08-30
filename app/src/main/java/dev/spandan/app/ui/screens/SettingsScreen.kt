@@ -72,7 +72,7 @@ fun SettingsScreen(
         }
 
         if (settings.responderMode) {
-            SettingRow("Laptop dashboard", "Serves a bare-bones live view of received signals over this phone's Wi-Fi -- open the address below from a laptop on the same network.", dashboardUrl != null) {
+            SettingRow("Laptop dashboard", "Shows a live view of received signals on a nearby laptop — open the address below in its browser.", dashboardUrl != null) {
                 onToggleDashboard(it)
             }
             if (dashboardUrl != null) {

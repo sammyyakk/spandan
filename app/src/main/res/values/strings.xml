@@ -31,10 +31,11 @@
     <string name="status_im_safe_confirm_no">Keep broadcasting</string>
     <string name="status_add_detail">Add a detail</string>
 
-    <!-- Bluetooth / permission edge states -->
-    <string name="bluetooth_off_title">Bluetooth is off</string>
-    <string name="bluetooth_off_action">Tap to turn on</string>
+    <!-- Signal / permission edge states: no technology names here. A
+         panicked person needs "what do I tap", not what runs underneath. -->
+    <string name="bluetooth_off_title">Signal is turned off</string>
+    <string name="bluetooth_off_action">Tap to turn it on</string>
     <string name="permission_needed_title">Permission needed</string>
-    <string name="permission_needed_body">Spandan needs Bluetooth permission to send and relay signals.</string>
+    <string name="permission_needed_body">Spandan needs permission to send your signal to nearby phones.</string>
     <string name="permission_needed_action">Grant permission</string>
 </resources>

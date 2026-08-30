@@ -58,6 +58,10 @@ private fun defaultSeverityFor(category: HazardCategory): Int = when (category) 
 class RealMeshRepository : MeshRepository {
     private var service: MeshService? = null
     private val handler = Handler(Looper.getMainLooper())
+    private val riskTrendTracker = dev.spandan.mesh.RiskTrendTracker(dev.spandan.app.ble.AndroidClock())
+
+    /** How fast a signal's situation is worsening/improving, not just how bad it is right now (see RiskTrendTracker). */
+    fun riskTrendFor(originId: Int): dev.spandan.mesh.RiskTrend = riskTrendTracker.trendFor(originId)
 
     private val _uiState = MutableStateFlow(SosUiState())
     override val uiState: StateFlow<SosUiState> = _uiState.asStateFlow()
@@ -183,6 +187,7 @@ class RealMeshRepository : MeshRepository {
         val current = _uiState.value
 
         if (event is MeshEvent.Received && event.packet.msgType == MsgType.SOS) {
+            riskTrendTracker.record(event.packet.originId, event.packet.baroValid, event.packet.baroDeltaDeciHpa)
             val key = event.packet.originId to event.packet.msgId
             val existing = _receivedSignals.value
             if (existing.none { (it.packet.originId to it.packet.msgId) == key }) {

@@ -68,25 +68,45 @@ class WifiDirectTransport(context: Context) {
         val config = android.net.wifi.p2p.WifiP2pConfig().apply { deviceAddress = device.deviceAddress }
         mgr.connect(ch, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                Thread {
-                    runCatching {
-                        // Client role: the group owner runs the receiving server (see
-                        // startReceiving). Address resolution in a full implementation
-                        // comes from WIFI_P2P_CONNECTION_CHANGED_ACTION's group info;
-                        // simplified here to the well-known group-owner-on-first-hop case.
-                        val socket = Socket()
-                        socket.connect(java.net.InetSocketAddress("192.168.49.1", PORT), 8_000)
-                        DataOutputStream(socket.getOutputStream()).use { out ->
-                            out.writeInt(payload.size)
-                            out.write(payload)
-                        }
-                        socket.close()
-                        onResult(true, "sent ${payload.size} bytes")
-                    }.onFailure { e ->
-                        Log.w(TAG, "send failed", e)
-                        onResult(false, "send failed: ${e.message}")
+                // Group-owner election is negotiated, not something either side
+                // picks -- a hardcoded "the owner is always 192.168.49.1" guess
+                // was wrong in testing (this device became owner at a different
+                // address). requestConnectionInfo() gives the real address.
+                mgr.requestConnectionInfo(ch) { info ->
+                    if (!info.groupFormed) {
+                        onResult(false, "group did not form")
+                        return@requestConnectionInfo
                     }
-                }.start()
+                    if (info.isGroupOwner) {
+                        // This device negotiated as host, not client -- it has no
+                        // one to push to (the other side would need to connect
+                        // in, which requires it to already be listening). Owner
+                        // election is effectively random per attempt; retrying
+                        // often flips it.
+                        onResult(false, "this device became the host this time -- try again")
+                        return@requestConnectionInfo
+                    }
+                    val ownerAddress = info.groupOwnerAddress
+                    if (ownerAddress == null) {
+                        onResult(false, "no host address available")
+                        return@requestConnectionInfo
+                    }
+                    Thread {
+                        runCatching {
+                            val socket = Socket()
+                            socket.connect(java.net.InetSocketAddress(ownerAddress, PORT), 8_000)
+                            DataOutputStream(socket.getOutputStream()).use { out ->
+                                out.writeInt(payload.size)
+                                out.write(payload)
+                            }
+                            socket.close()
+                            onResult(true, "sent ${payload.size} bytes")
+                        }.onFailure { e ->
+                            Log.w(TAG, "send failed", e)
+                            onResult(false, "send failed: ${e.message}")
+                        }
+                    }.start()
+                }
             }
 
             override fun onFailure(reason: Int) {

@@ -22,7 +22,9 @@ import dev.spandan.app.ui.theme.SpandanColors
 import dev.spandan.app.ui.theme.SpandanHeadline
 import dev.spandan.app.ui.theme.SpandanShape
 import dev.spandan.app.ui.theme.SpandanSpacing
+import dev.spandan.mesh.BarometricAltitude
 import dev.spandan.mesh.HazardCategory
+import dev.spandan.mesh.RiskTrend
 import dev.spandan.mesh.SpandanPacket
 
 /**
@@ -39,7 +41,7 @@ data class ReceivedSignal(
 )
 
 @Composable
-fun ResponderScreen(signals: List<ReceivedSignal>) {
+fun ResponderScreen(signals: List<ReceivedSignal>, riskTrendFor: (Int) -> RiskTrend = { RiskTrend.STABLE }) {
     val pending = signals.count { !it.acknowledged }
     Column(modifier = Modifier.fillMaxSize().background(SpandanColors.ResponderSurface).padding(SpandanSpacing.md)) {
         SpandanHeadline("Responder", color = SpandanColors.OnResponderSurface)
@@ -53,18 +55,27 @@ fun ResponderScreen(signals: List<ReceivedSignal>) {
                 SpandanBody("Waiting for distress signals…", color = SpandanColors.OnResponderSurface)
             }
         } else {
+            // Worsening trend jumps the queue ahead of severity -- a situation
+            // getting rapidly worse right now outranks a static high-severity
+            // one, which is exactly the point of tracking the trend at all.
             LazyColumn(verticalArrangement = Arrangement.spacedBy(SpandanSpacing.sm)) {
                 items(
-                    signals.sortedWith(compareBy({ it.acknowledged }, { -it.packet.severity })),
+                    signals.sortedWith(
+                        compareBy(
+                            { it.acknowledged },
+                            { riskTrendFor(it.packet.originId) != RiskTrend.WORSENING },
+                            { -it.packet.severity },
+                        )
+                    ),
                     key = { "${it.packet.originId}-${it.packet.msgId}" },
-                ) { signal -> SignalRow(signal) }
+                ) { signal -> SignalRow(signal, riskTrendFor(signal.packet.originId)) }
             }
         }
     }
 }
 
 @Composable
-private fun SignalRow(signal: ReceivedSignal) {
+private fun SignalRow(signal: ReceivedSignal, trend: RiskTrend) {
     val statusColor = if (signal.acknowledged) SpandanColors.ResponderAcked else SpandanColors.ResponderPending
     Row(
         modifier = Modifier
@@ -91,6 +102,19 @@ private fun SignalRow(signal: ReceivedSignal) {
                 color = SpandanColors.OnResponderSurface,
                 fontSize = 18.sp,
             )
+            Text(
+                describeElevation(signal.packet),
+                color = SpandanColors.OnResponderSurface,
+                fontSize = 18.sp,
+            )
+            if (trend != RiskTrend.STABLE) {
+                Text(
+                    if (trend == RiskTrend.WORSENING) "▲ WORSENING" else "▼ IMPROVING",
+                    color = if (trend == RiskTrend.WORSENING) SpandanColors.ResponderPending else SpandanColors.ResponderAcked,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Black,
+                )
+            }
         }
         Text(
             if (signal.acknowledged) "ACKED" else "PENDING",
@@ -99,6 +123,14 @@ private fun SignalRow(signal: ReceivedSignal) {
             fontWeight = FontWeight.Black,
         )
     }
+}
+
+/** "Here, roughly this high/low, with this uncertainty" -- never a bare number claiming floor-level precision. */
+private fun describeElevation(packet: SpandanPacket): String {
+    if (!packet.baroValid) return "no elevation reading"
+    val estimate = BarometricAltitude.estimate(packet.baroDeltaDeciHpa)
+    val sign = if (estimate.meters >= 0) "+" else ""
+    return "elevation ${sign}${"%.0f".format(estimate.meters)}m (±${"%.0f".format(estimate.uncertaintyMeters)}m)"
 }
 
 private fun describeHazard(hazard: HazardCategory): String = when (hazard) {

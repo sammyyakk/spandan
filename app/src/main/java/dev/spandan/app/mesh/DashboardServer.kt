@@ -2,6 +2,8 @@ package dev.spandan.app.mesh
 
 import android.util.Log
 import dev.spandan.app.ui.screens.ReceivedSignal
+import dev.spandan.mesh.BarometricAltitude
+import dev.spandan.mesh.RiskTrend
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.PrintWriter
@@ -23,7 +25,10 @@ private const val PORT = 8787
  * a demo aid, not a real responder dashboard -- the brief explicitly scopes
  * the real one out as a separate product.
  */
-class DashboardServer(private val signalsProvider: () -> List<ReceivedSignal>) {
+class DashboardServer(
+    private val signalsProvider: () -> List<ReceivedSignal>,
+    private val riskTrendProvider: (originId: Int) -> RiskTrend = { RiskTrend.STABLE },
+) {
     private var serverSocket: ServerSocket? = null
     @Volatile private var running = false
 
@@ -63,7 +68,9 @@ class DashboardServer(private val signalsProvider: () -> List<ReceivedSignal>) {
 
     private fun signalsJson(): String {
         val items = signalsProvider().joinToString(",") { s ->
-            """{"origin":"0x${s.packet.originId.toString(16)}","hazard":"${s.packet.hazardCategory}","severity":${s.packet.severity},"acknowledged":${s.acknowledged},"lat":${if (s.packet.location.validFix) s.packet.location.latDegrees() else "null"},"lon":${if (s.packet.location.validFix) s.packet.location.lonDegrees() else "null"}}"""
+            val elevation = if (s.packet.baroValid) BarometricAltitude.estimate(s.packet.baroDeltaDeciHpa) else null
+            val trend = riskTrendProvider(s.packet.originId)
+            """{"origin":"0x${s.packet.originId.toString(16)}","hazard":"${s.packet.hazardCategory}","severity":${s.packet.severity},"acknowledged":${s.acknowledged},"lat":${if (s.packet.location.validFix) s.packet.location.latDegrees() else "null"},"lon":${if (s.packet.location.validFix) s.packet.location.lonDegrees() else "null"},"elevationM":${elevation?.meters ?: "null"},"elevationUncertaintyM":${elevation?.uncertaintyMeters ?: "null"},"trend":"$trend"}"""
         }
         return "[$items]"
     }
@@ -81,16 +88,16 @@ class DashboardServer(private val signalsProvider: () -> List<ReceivedSignal>) {
               h1{color:#f5f04a}
               table{width:100%;border-collapse:collapse}
               td,th{border:2px solid #fff;padding:8px;text-align:left}
-              .acked{color:#35d4c7} .pending{color:#f2a63a}
+              .acked{color:#35d4c7} .pending{color:#f2a63a} .worsening{color:#f2a63a} .improving{color:#35d4c7}
             </style></head><body>
             <h1>Spandan — received signals</h1>
-            <table id="t"><thead><tr><th>Origin</th><th>Hazard</th><th>Severity</th><th>Position</th><th>Status</th></tr></thead><tbody></tbody></table>
+            <table id="t"><thead><tr><th>Origin</th><th>Hazard</th><th>Severity</th><th>Position</th><th>Elevation</th><th>Trend</th><th>Status</th></tr></thead><tbody></tbody></table>
             <script>
             async function refresh() {
               const res = await fetch('/api/signals');
               const rows = await res.json();
               const body = document.querySelector('#t tbody');
-              body.innerHTML = rows.map(r => `<tr><td>${'$'}{r.origin}</td><td>${'$'}{r.hazard}</td><td>${'$'}{r.severity}</td><td>${'$'}{r.lat ? r.lat.toFixed(5)+', '+r.lon.toFixed(5) : 'no fix'}</td><td class="${'$'}{r.acknowledged ? 'acked' : 'pending'}">${'$'}{r.acknowledged ? 'ACKED' : 'PENDING'}</td></tr>`).join('');
+              body.innerHTML = rows.map(r => `<tr><td>${'$'}{r.origin}</td><td>${'$'}{r.hazard}</td><td>${'$'}{r.severity}</td><td>${'$'}{r.lat ? r.lat.toFixed(5)+', '+r.lon.toFixed(5) : 'no fix'}</td><td>${'$'}{r.elevationM !== null ? (r.elevationM >= 0 ? '+' : '') + r.elevationM.toFixed(0) + 'm (±' + r.elevationUncertaintyM.toFixed(0) + 'm)' : 'no reading'}</td><td class="${'$'}{r.trend.toLowerCase()}">${'$'}{r.trend !== 'STABLE' ? r.trend : ''}</td><td class="${'$'}{r.acknowledged ? 'acked' : 'pending'}">${'$'}{r.acknowledged ? 'ACKED' : 'PENDING'}</td></tr>`).join('');
             }
             refresh();
             setInterval(refresh, 3000);

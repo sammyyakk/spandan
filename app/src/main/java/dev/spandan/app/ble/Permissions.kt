@@ -22,6 +22,15 @@ object Permissions {
         } else {
             emptyArray()
         }
-        return bluetooth + Manifest.permission.ACCESS_FINE_LOCATION
+        // NEARBY_WIFI_DEVICES (API 33+) gates Wi-Fi Direct peer discovery,
+        // same way BLUETOOTH_SCAN gates BLE -- without it WifiP2pManager
+        // fails discovery with a bare SecurityException the ActionListener
+        // only surfaces as an opaque error code, no message.
+        val wifiDirect = if (Build.VERSION.SDK_INT >= 33) {
+            arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+        } else {
+            emptyArray()
+        }
+        return bluetooth + wifiDirect + Manifest.permission.ACCESS_FINE_LOCATION
     }
 }

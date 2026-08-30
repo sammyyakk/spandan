@@ -176,10 +176,12 @@ class MeshService : Service() {
 
     private val dashboardSignals = LinkedHashMap<Long, dev.spandan.app.ui.screens.ReceivedSignal>()
     private var dashboardServer: DashboardServer? = null
+    private val dashboardRiskTracker = dev.spandan.mesh.RiskTrendTracker(AndroidClock())
 
     private fun trackForDashboard(event: MeshEvent) {
         when {
             event is MeshEvent.Received && event.packet.msgType == dev.spandan.mesh.MsgType.SOS -> {
+                dashboardRiskTracker.record(event.packet.originId, event.packet.baroValid, event.packet.baroDeltaDeciHpa)
                 val key = event.packet.dedupKey()
                 if (!dashboardSignals.containsKey(key)) {
                     dashboardSignals[key] = dev.spandan.app.ui.screens.ReceivedSignal(event.packet, System.currentTimeMillis(), false)
@@ -195,7 +197,10 @@ class MeshService : Service() {
 
     /** Returns the local port once started, so the UI can show "visit http://<ip>:<port>". */
     fun startDashboard(): Int {
-        val server = dashboardServer ?: DashboardServer { dashboardSignals.values.toList() }.also { dashboardServer = it }
+        val server = dashboardServer ?: DashboardServer(
+            signalsProvider = { dashboardSignals.values.toList() },
+            riskTrendProvider = { originId -> dashboardRiskTracker.trendFor(originId) },
+        ).also { dashboardServer = it }
         return server.start()
     }
 

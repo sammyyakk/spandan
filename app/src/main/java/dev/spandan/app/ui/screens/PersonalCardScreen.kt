@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +56,19 @@ fun PersonalCardScreen(card: PersonalCard, onSave: (PersonalCard) -> Unit, onBac
     var isRecording by remember { mutableStateOf(false) }
     var voiceNoteFile by remember { mutableStateOf<File?>(null) }
     var sendStatus by remember { mutableStateOf("") }
+    var receivedInfo by remember { mutableStateOf("") }
+
+    // Opportunistic receive: whichever side of a Wi-Fi Direct negotiation
+    // ends up as group owner needs a listener already running for the other
+    // side's connect to succeed, and role election isn't ours to control --
+    // so both phones listen while this screen is open, not just the one
+    // that's "supposed to" receive.
+    DisposableEffect(Unit) {
+        transport.startReceiving { payload ->
+            receivedInfo = "Received ${payload.size} bytes from a nearby device"
+        }
+        onDispose { transport.stopReceiving() }
+    }
 
     fun currentCard() = PersonalCard(
         bloodGroup = bloodGroup,
@@ -129,6 +143,9 @@ fun PersonalCardScreen(card: PersonalCard, onSave: (PersonalCard) -> Unit, onBac
             )
             if (sendStatus.isNotEmpty()) {
                 Text(sendStatus, color = SpandanColors.OnSurfaceMuted, fontSize = 18.sp)
+            }
+            if (receivedInfo.isNotEmpty()) {
+                Text(receivedInfo, color = SpandanColors.Hazard, fontSize = 18.sp, modifier = Modifier.padding(top = SpandanSpacing.xs))
             }
         }
         item {

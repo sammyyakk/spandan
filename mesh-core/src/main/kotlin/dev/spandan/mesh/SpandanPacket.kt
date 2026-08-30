@@ -4,7 +4,7 @@ package dev.spandan.mesh
 const val PACKET_SIZE_BYTES = 16
 
 enum class MsgType(val bits: Int) {
-    SOS(0), RELAY_META(1), ACK(2), RESERVED(3);
+    SOS(0), RELAY_META(1), ACK(2), COMMAND_MESSAGE(3);
 
     companion object {
         fun fromBits(bits: Long): MsgType = entries.first { it.bits.toLong() == bits }
@@ -46,6 +46,38 @@ enum class CannedPhrase(val bits: Int) {
 
     companion object {
         fun fromBits(bits: Long): CannedPhrase = entries.first { it.bits.toLong() == bits }
+    }
+}
+
+/**
+ * Reverse-channel canned messages from rescue command back to victims —
+ * same reasoning as [CannedPhrase] (no room for free text in a 16-byte
+ * packet), and reuses the exact same 4-bit wire slot: a packet's `phrase`
+ * bits mean [CannedPhrase] when `msg_type = SOS` and [CommandMessage] when
+ * `msg_type = COMMAND_MESSAGE`. No new bits needed — the field's meaning is
+ * just msg_type-dependent, the same way `origin_id`/`msg_id` already mean
+ * different things on an SOS vs. an ACK.
+ */
+enum class CommandMessage(val bits: Int) {
+    NONE(0),
+    HELP_EN_ROUTE(1),
+    STAY_PUT(2),
+    MOVE_TO_HIGHER_GROUND(3),
+    EVACUATE_NOW(4),
+    RESPONDER_NEARBY(5),
+    AREA_UNSAFE(6),
+    WAIT_FOR_RESCUE(7),
+    SIGNAL_RECEIVED_HELP_COMING(8),
+    FOLLOW_NEAREST_EXIT(9),
+    DO_NOT_MOVE(10),
+    RESCUE_DELAYED(11),
+    HELP_ARRIVING_SOON(12),
+    OTHER_INSTRUCTION(13),
+    RESERVED_14(14),
+    RESERVED_15(15);
+
+    companion object {
+        fun fromBits(bits: Long): CommandMessage = entries.first { it.bits.toLong() == bits }
     }
 }
 
@@ -119,6 +151,9 @@ data class SpandanPacket(
      */
     fun dedupKey(): Long =
         (msgType.bits.toLong() shl 32) or (originId.toLong() shl 16) or msgId.toLong()
+
+    /** Reinterprets the [phrase] wire bits as a [CommandMessage] — only meaningful when [msgType] is [MsgType.COMMAND_MESSAGE]. */
+    val commandMessage: CommandMessage get() = CommandMessage.fromBits(phrase.bits.toLong())
 
     fun encode(): ByteArray {
         val w = BitWriter(PACKET_SIZE_BYTES)

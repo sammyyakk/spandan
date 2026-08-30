@@ -126,6 +126,38 @@ class MeshNode(
     }
 
     /**
+     * Originates a reverse-channel message from rescue command back to
+     * victims. Gateway-only — a normal relay node has no business injecting
+     * instructions into the mesh. Flood-relayed exactly like an SOS (not
+     * single-hop like the presence heartbeat), since it needs to reach
+     * victims who may be several hops out, using the finite-repeat path
+     * (enough redundancy to be picked up by the flood once, no ack-loop of
+     * its own — command messages aren't acknowledged back).
+     */
+    fun originateCommandMessage(message: CommandMessage, severity: Int = 4): Int {
+        require(isGateway) { "only a gateway node originates command messages" }
+        val msgId = random.nextInt(0, 0x10000)
+        val packet = SpandanPacket(
+            msgType = MsgType.COMMAND_MESSAGE,
+            protocolVersion = 0,
+            hazardCategory = HazardCategory.OTHER,
+            severity = severity,
+            originId = originId,
+            msgId = msgId,
+            location = QuantizedLocation.noFix(),
+            baroValid = false,
+            baroDeltaDeciHpa = 0,
+            batteryBucket = 7,
+            livenessBucket = 0,
+            originTs = (clock.nowMillis() / 1000 % 256).toInt(),
+            hopCount = 0,
+            phrase = CannedPhrase.fromBits(message.bits.toLong()),
+        )
+        originate(packet)
+        return msgId
+    }
+
+    /**
      * Updates the phrase on an SOS we originated that's still actively
      * repeating (not yet acknowledged). Takes effect on the *next* scheduled
      * resend — msgId/dedupKey are unchanged, so this is not a new SOS.

@@ -75,7 +75,7 @@ metadata — without touching the fragment-1 layout).
 
 | Field | Bits | Notes |
 |---|---|---|
-| `msg_type` | 2 | 0=SOS, 1=RELAY_META (presence heartbeat — single-hop only, never flood-relayed), 2=ACK, 3=reserved |
+| `msg_type` | 2 | 0=SOS, 1=RELAY_META (presence heartbeat — single-hop only, never flood-relayed), 2=ACK, 3=COMMAND_MESSAGE (reverse-channel, gateway-originated, flood-relayed like SOS) |
 | `protocol_version` | 3 | forward-compat, up to 8 versions |
 | `hazard_category` | 2 | trapped / stranded / medical / other |
 | `severity` | 3 | 0 (info) – 7 (critical), victim-declared |
@@ -150,6 +150,26 @@ it's not part of packet identity). So an attached phrase only reaches
 neighbours encountered *after* the update, never nodes that already relayed
 the original. Acceptable for a hackathon demo; a real fix would need a
 separate small "amendment" packet type, not attempted here.
+
+**Reverse-channel command messages (`msg_type = COMMAND_MESSAGE`)** — added for
+the victim-facing UI's "Messages from command" screen. Rescue command
+(gateway node) originates a `CommandMessage` (a fixed vocabulary — `STAY_PUT`,
+`EVACUATE_NOW`, `HELP_EN_ROUTE`, etc., same reasoning as `CannedPhrase`: no
+room for free text in 16 bytes). **Reuses the same 4-bit `phrase` wire slot as
+`CannedPhrase`** rather than taking new bits — a packet's 4-bit payload means
+`CannedPhrase` when `msg_type = SOS` and `CommandMessage` when
+`msg_type = COMMAND_MESSAGE`, exactly the way `origin_id`/`msg_id` already
+mean different things on an SOS vs. its ACK. `SpandanPacket.commandMessage` is
+a computed view over the same bits `phrase` reads, so no encode/decode changes
+were needed for this reuse.
+
+Gateway-only origination (`MeshNode.originateCommandMessage` throws if
+`!isGateway`) — a normal relay node has no business injecting instructions
+into the mesh. Flood-relayed exactly like an SOS, not single-hop like the
+presence heartbeat, since a command message needs to reach victims who may be
+several hops from the gateway. Uses the finite-repeat path (same as an ACK):
+enough redundancy to be picked up by the flood once, no ack-loop of its own —
+command messages aren't themselves acknowledged.
 
 ## Dedup, cache, relay (Stage 3+)
 

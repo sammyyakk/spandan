@@ -60,6 +60,16 @@ class SpandanPacketTest {
     }
 
     @Test
+    fun `commandMessage view decodes every value without throwing, including bits CommandMessage doesn't name`() {
+        for (raw in 0..15) {
+            val phrase = CannedPhrase.fromBits(raw.toLong())
+            val p = samplePacket(msgType = MsgType.COMMAND_MESSAGE, phrase = phrase)
+            val decoded = SpandanPacket.decode(p.encode())
+            assertEquals(raw, decoded.commandMessage.bits)
+        }
+    }
+
+    @Test
     fun `round trips boundary values for every field`() {
         val boundaryPackets = listOf(
             samplePacket(protocolVersion = 0, severity = 0, originId = 0, msgId = 0, originTs = 0, hopCount = 0),

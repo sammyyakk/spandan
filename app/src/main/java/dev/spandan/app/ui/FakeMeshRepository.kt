@@ -3,6 +3,7 @@ package dev.spandan.app.ui
 import dev.spandan.app.ui.state.SosStatus
 import dev.spandan.app.ui.state.SosUiState
 import dev.spandan.mesh.CannedPhrase
+import dev.spandan.mesh.CommandMessage
 import dev.spandan.mesh.HazardCategory
 import dev.spandan.mesh.NeighbourInfo
 import dev.spandan.mesh.Role
@@ -27,6 +28,9 @@ class FakeMeshRepository(initial: SosUiState = SosUiState()) : MeshRepository {
     private val _log = MutableStateFlow<List<LogEntry>>(emptyList())
     override val log: StateFlow<List<LogEntry>> = _log.asStateFlow()
 
+    private val _messages = MutableStateFlow<List<IncomingMessage>>(emptyList())
+    override val messages: StateFlow<List<IncomingMessage>> = _messages.asStateFlow()
+
     override fun fireSos(category: HazardCategory) {
         _uiState.value = _uiState.value.copy(
             status = SosStatus.SENDING,
@@ -47,6 +51,23 @@ class FakeMeshRepository(initial: SosUiState = SosUiState()) : MeshRepository {
 
     override fun setGateway(enabled: Boolean) = Unit
     override fun setWeightedPropagation(enabled: Boolean) = Unit
+
+    override fun sendCommandMessage(message: CommandMessage) = Unit
+
+    override fun markMessageRead(msgId: Int) {
+        _messages.value = _messages.value.map { if (it.msgId == msgId) it.copy(read = true) else it }
+    }
+
+    /** Rehearsal hook: simulate an incoming command message arriving, no hardware needed. */
+    fun simulateIncomingMessage(message: CommandMessage) {
+        val incoming = IncomingMessage(
+            msgId = (0..0xFFFF).random(),
+            message = message,
+            receivedAtMillis = System.currentTimeMillis(),
+            read = false,
+        )
+        _messages.value = listOf(incoming) + _messages.value
+    }
 
     fun simulateRelayed() {
         _uiState.value = _uiState.value.copy(status = SosStatus.RELAYED, neighbourCount = 2, role = Role.RELAY)

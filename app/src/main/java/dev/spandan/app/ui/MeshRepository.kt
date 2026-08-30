@@ -6,6 +6,7 @@ import dev.spandan.app.mesh.MeshService
 import dev.spandan.app.ui.state.SosStatus
 import dev.spandan.app.ui.state.SosUiState
 import dev.spandan.mesh.CannedPhrase
+import dev.spandan.mesh.CommandMessage
 import dev.spandan.mesh.HazardCategory
 import dev.spandan.mesh.MeshEvent
 import dev.spandan.mesh.MsgType
@@ -15,6 +16,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class LogEntry(val timestampMillis: Long, val text: String)
+
+data class IncomingMessage(
+    val msgId: Int,
+    val message: CommandMessage,
+    val receivedAtMillis: Long,
+    val read: Boolean,
+)
 
 /**
  * Everything a screen needs from the mesh, abstracted so screens are
@@ -26,12 +34,15 @@ interface MeshRepository {
     val uiState: StateFlow<SosUiState>
     val nearbyDevices: StateFlow<List<NeighbourInfo>>
     val log: StateFlow<List<LogEntry>>
+    val messages: StateFlow<List<IncomingMessage>>
 
     fun fireSos(category: HazardCategory)
     fun attachPhrase(phrase: CannedPhrase)
     fun cancelSos()
     fun setGateway(enabled: Boolean)
     fun setWeightedPropagation(enabled: Boolean)
+    fun sendCommandMessage(message: CommandMessage)
+    fun markMessageRead(msgId: Int)
 }
 
 /** Category -> default severity, since a panicking one-handed user is never asked to rate severity 0-7 themselves. */
@@ -55,6 +66,9 @@ class RealMeshRepository : MeshRepository {
 
     private val _log = MutableStateFlow<List<LogEntry>>(emptyList())
     override val log: StateFlow<List<LogEntry>> = _log.asStateFlow()
+
+    private val _messages = MutableStateFlow<List<IncomingMessage>>(emptyList())
+    override val messages: StateFlow<List<IncomingMessage>> = _messages.asStateFlow()
 
     // The service (not this repository) is the source of truth for whether an
     // SOS is active -- this repository is recreated whenever MainActivity is
@@ -145,6 +159,15 @@ class RealMeshRepository : MeshRepository {
         service?.setWeightedPropagation(enabled)
     }
 
+    override fun sendCommandMessage(message: CommandMessage) {
+        service?.sendCommandMessage(message)
+        appendLog("Command message sent: $message")
+    }
+
+    override fun markMessageRead(msgId: Int) {
+        _messages.value = _messages.value.map { if (it.msgId == msgId) it.copy(read = true) else it }
+    }
+
     private fun onMeshEvent(event: MeshEvent) {
         val current = _uiState.value
         when {
@@ -160,6 +183,18 @@ class RealMeshRepository : MeshRepository {
                 current.status == SosStatus.SENDING -> {
                 _uiState.value = current.copy(status = SosStatus.RELAYED)
                 appendLog("Relayed by a nearby device")
+            }
+            event is MeshEvent.Received && event.packet.msgType == MsgType.COMMAND_MESSAGE -> {
+                val incoming = IncomingMessage(
+                    msgId = event.packet.msgId,
+                    message = event.packet.commandMessage,
+                    receivedAtMillis = System.currentTimeMillis(),
+                    read = false,
+                )
+                if (_messages.value.none { it.msgId == incoming.msgId }) {
+                    _messages.value = (listOf(incoming) + _messages.value)
+                    appendLog("Message from command: ${incoming.message}")
+                }
             }
             event is MeshEvent.Sent && event.packet.msgType != MsgType.RELAY_META ->
                 appendLog("Sent: ${event.packet.msgType} sev=${event.packet.severity}")

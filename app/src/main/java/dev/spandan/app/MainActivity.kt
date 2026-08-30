@@ -40,6 +40,7 @@ import dev.spandan.app.ble.Permissions
 import dev.spandan.app.mesh.MeshService
 import dev.spandan.app.mesh.MeshSnapshot
 import dev.spandan.app.ui.RealMeshRepository
+import dev.spandan.app.ui.screens.MessagesScreen
 import dev.spandan.app.ui.screens.SosStatusScreen
 import dev.spandan.mesh.DropReason
 import dev.spandan.mesh.HazardCategory
@@ -122,6 +123,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppRoot(service: MeshService?, repository: RealMeshRepository, onStart: () -> Unit, onStop: () -> Unit) {
     var showDevPanel by remember { mutableStateOf(false) }
+    var showMessages by remember { mutableStateOf(false) }
     var started by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -143,35 +145,59 @@ private fun AppRoot(service: MeshService?, repository: RealMeshRepository, onSta
     }
 
     val uiState by repository.uiState.collectAsState()
+    val messages by repository.messages.collectAsState()
+    val unreadCount = messages.count { !it.read }
 
     androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
-        if (showDevPanel) {
-            SpandanScreen(service = service, onStart = onStart, onStop = onStop)
-            Text(
-                "< back",
-                modifier = Modifier
-                    .align(androidx.compose.ui.Alignment.TopStart)
-                    .padding(8.dp)
-                    .background(androidx.compose.ui.graphics.Color(0x99000000))
-                    .padding(4.dp)
-                    .clickable { showDevPanel = false },
-                color = androidx.compose.ui.graphics.Color.White,
-            )
-        } else {
-            SosStatusScreen(
-                state = uiState,
-                onFire = { category -> repository.fireSos(category) },
-                onCancel = { repository.cancelSos() },
-                onAttachPhrase = { phrase -> repository.attachPhrase(phrase) },
-            )
-            Text(
-                "dev",
-                modifier = Modifier
-                    .align(androidx.compose.ui.Alignment.TopEnd)
-                    .padding(8.dp)
-                    .clickable { showDevPanel = true },
-                color = androidx.compose.ui.graphics.Color.Gray,
-            )
+        when {
+            showDevPanel -> {
+                SpandanScreen(service = service, onStart = onStart, onStop = onStop)
+                Text(
+                    "< back",
+                    modifier = Modifier
+                        .align(androidx.compose.ui.Alignment.TopStart)
+                        .padding(8.dp)
+                        .background(androidx.compose.ui.graphics.Color(0x99000000))
+                        .padding(4.dp)
+                        .clickable { showDevPanel = false },
+                    color = androidx.compose.ui.graphics.Color.White,
+                )
+            }
+            showMessages -> {
+                MessagesScreen(messages = messages, onOpen = { msgId -> repository.markMessageRead(msgId) })
+                Text(
+                    "< back",
+                    modifier = Modifier
+                        .align(androidx.compose.ui.Alignment.TopStart)
+                        .padding(8.dp)
+                        .clickable { showMessages = false },
+                    color = androidx.compose.ui.graphics.Color.White,
+                )
+            }
+            else -> {
+                SosStatusScreen(
+                    state = uiState,
+                    onFire = { category -> repository.fireSos(category) },
+                    onCancel = { repository.cancelSos() },
+                    onAttachPhrase = { phrase -> repository.attachPhrase(phrase) },
+                )
+                Text(
+                    if (unreadCount > 0) "Messages ($unreadCount)" else "Messages",
+                    modifier = Modifier
+                        .align(androidx.compose.ui.Alignment.TopStart)
+                        .padding(8.dp)
+                        .clickable { showMessages = true },
+                    color = if (unreadCount > 0) androidx.compose.ui.graphics.Color.White else androidx.compose.ui.graphics.Color.Gray,
+                )
+                Text(
+                    "dev",
+                    modifier = Modifier
+                        .align(androidx.compose.ui.Alignment.TopEnd)
+                        .padding(8.dp)
+                        .clickable { showDevPanel = true },
+                    color = androidx.compose.ui.graphics.Color.Gray,
+                )
+            }
         }
     }
 }
@@ -281,6 +307,15 @@ private fun SpandanScreen(service: MeshService?, onStart: () -> Unit, onStop: ()
             }
         }
 
+        Text("command message (gateway-only, stands in for the responder dashboard):")
+        LazyRow(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            items(dev.spandan.mesh.CommandMessage.entries.filter { it != dev.spandan.mesh.CommandMessage.NONE }) { m ->
+                Button(onClick = {
+                    runCatching { service?.sendCommandMessage(m) }
+                }) { Text(m.name.replace('_', ' ').take(16) + "  ") }
+            }
+        }
+
         Text("log:", style = MaterialTheme.typography.titleSmall)
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(log) { line -> Text(line) }
@@ -291,9 +326,14 @@ private fun SpandanScreen(service: MeshService?, onStart: () -> Unit, onStop: ()
 private fun describeNeighbour(n: NeighbourInfo): String =
     "0x${n.originId.toString(16).uppercase()} ${n.lastRssi?.let { "${it}dBm" } ?: ""} sev=${n.lastSeverity}"
 
+// The wire-format 4-bit payload means CannedPhrase on an SOS/ACK but
+// CommandMessage on a COMMAND_MESSAGE packet -- see SpandanPacket.commandMessage.
+private fun describePayload(packet: dev.spandan.mesh.SpandanPacket): String =
+    if (packet.msgType == dev.spandan.mesh.MsgType.COMMAND_MESSAGE) "msg=${packet.commandMessage}" else "phrase=${packet.phrase}"
+
 private fun describe(event: MeshEvent): String = when (event) {
-    is MeshEvent.Sent -> "SENT origin=0x${event.packet.originId.toString(16)} type=${event.packet.msgType} sev=${event.packet.severity} hop=${event.packet.hopCount} phrase=${event.packet.phrase}"
-    is MeshEvent.Received -> "RX origin=0x${event.packet.originId.toString(16)} type=${event.packet.msgType} sev=${event.packet.severity} hop=${event.packet.hopCount} phrase=${event.packet.phrase}"
+    is MeshEvent.Sent -> "SENT origin=0x${event.packet.originId.toString(16)} type=${event.packet.msgType} sev=${event.packet.severity} hop=${event.packet.hopCount} ${describePayload(event.packet)}"
+    is MeshEvent.Received -> "RX origin=0x${event.packet.originId.toString(16)} type=${event.packet.msgType} sev=${event.packet.severity} hop=${event.packet.hopCount} ${describePayload(event.packet)}"
     is MeshEvent.Relayed -> "RELAYED origin=0x${event.packet.originId.toString(16)} hop=${event.packet.hopCount}"
     is MeshEvent.Dropped -> "DROPPED reason=${event.reason}" + (event.packet?.let { " origin=0x${it.originId.toString(16)}" } ?: "")
     is MeshEvent.RoleChanged -> "ROLE -> ${event.role}"

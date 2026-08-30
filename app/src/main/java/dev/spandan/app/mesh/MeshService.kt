@@ -143,6 +143,11 @@ class MeshService : Service() {
         meshNode.isGateway = enabled
     }
 
+    /** Gateway-only, per MeshNode.originateCommandMessage's own contract -- throws otherwise. */
+    fun sendCommandMessage(message: dev.spandan.mesh.CommandMessage) {
+        meshNode.originateCommandMessage(message)
+    }
+
     fun setWeightedPropagation(enabled: Boolean) {
         meshNode.severityConfig = if (enabled) SeverityConfig.WEIGHTED else SeverityConfig.NAIVE_FLOODING
     }

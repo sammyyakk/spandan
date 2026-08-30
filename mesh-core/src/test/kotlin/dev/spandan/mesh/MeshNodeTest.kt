@@ -6,6 +6,7 @@ import dev.spandan.mesh.sim.VirtualClock
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -152,6 +153,34 @@ class MeshNodeChainRelayTest {
 
         assertEquals(0, h.countOf(1) { it is MeshEvent.Relayed })
         assertTrue(h.countOf(1) { it is MeshEvent.Dropped && (it as MeshEvent.Dropped).reason == DropReason.ROLE_NO_RELAY } >= 1)
+    }
+}
+
+class MeshNodeCommandMessageTest {
+    @Test
+    fun `non-gateway node cannot originate a command message`() {
+        val h = Harness(symmetric(0 to 1))
+        val a = h.node(0, originId = 0xA000)
+        assertFalse(a.isGateway)
+        assertFailsWith<IllegalArgumentException> { a.originateCommandMessage(CommandMessage.STAY_PUT) }
+    }
+
+    @Test
+    fun `command message flood-relays across multiple hops, unlike the single-hop heartbeat`() {
+        val links = (0 until 3).map { it to it + 1 }.toTypedArray()
+        val h = Harness(symmetric(*links))
+        val gateway = h.node(0, originId = 0xC000)
+        gateway.isGateway = true
+        h.node(1, originId = 0xB1); h.node(2, originId = 0xB2)
+        val end = h.node(3, originId = 0xEE00)
+
+        gateway.originateCommandMessage(CommandMessage.EVACUATE_NOW, severity = 7)
+        h.advance(60_000)
+
+        val received = h.events[3]!!.filterIsInstance<MeshEvent.Received>()
+            .filter { it.packet.msgType == MsgType.COMMAND_MESSAGE }
+        assertTrue(received.isNotEmpty(), "command message should flood-relay to the far end, unlike a heartbeat")
+        assertEquals(CommandMessage.EVACUATE_NOW, received.first().packet.commandMessage)
     }
 }
 

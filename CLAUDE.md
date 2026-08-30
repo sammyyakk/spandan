@@ -82,8 +82,8 @@ metadata — without touching the fragment-1 layout).
 | `origin_id` | 16 | rotating pseudonymous ID, regenerated on each app-level "session" (see below) — never MAC/IMEI |
 | `msg_id` | 16 | random per-origin nonce; uniqueness key for dedup is **(origin_id, msg_id)**, not msg_id alone |
 | `gps_valid` | 1 | 0 = no fix, ignore lat/lon |
-| `lat_q` | 24 | signed, quantized: `round(lat * 2^23 / 180)` → ~2.4 m resolution at the equator |
-| `lon_q` | 24 | signed, quantized: `round(lon * 2^23 / 180)` → ~2.4 m resolution |
+| `lat_q` | 24 | signed, quantized: `round(lat * 2^23 / 90)` (lat spans ±90°, uses full 24-bit range) → ~1.2 m resolution |
+| `lon_q` | 24 | signed, quantized: `round(lon * 2^23 / 180)` (lon spans ±180°) → ~2.4 m resolution at the equator |
 | `baro_valid` | 1 | 0 = no barometer on this device, ignore baro_delta |
 | `baro_delta` | 8 | signed, units of 0.1 hPa vs. device's own boot-time baseline; ±12.7 hPa range, enough to see "fell/is buried" pressure shifts |
 | `battery_bucket` | 3 | 8 buckets, ~12.5% each — battery is a role-election input, not a display exact-percent, so bucketing is correct not lossy-for-no-reason |

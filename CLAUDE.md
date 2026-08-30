@@ -1,0 +1,183 @@
+# Spandan — Offline Disaster-Response BLE Mesh
+
+Android-only, Kotlin, offline-first mesh network. Trapped/stranded people broadcast
+distress packets over BLE; nearby phones relay hop-by-hop to a perimeter responder
+(gateway). No internet, no cloud, no Play Services dependency for core function.
+Built for a hackathon: networking core first, UI is a placeholder.
+
+## Non-negotiables
+
+- Kotlin, native Android. minSdk 26, target latest stable SDK.
+- No network calls anywhere in the core. Airplane mode + BT on must fully work.
+- No Google Play Services dependency for core mesh function.
+- Android 12+ runtime permissions (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`,
+  `BLUETOOTH_CONNECT`) with `neverForLocation` where applicable; pre-12 falls back to
+  `ACCESS_FINE_LOCATION` for scan. Both paths must be handled explicitly, gated on
+  `Build.VERSION.SDK_INT`.
+- Emulators can't advertise BLE. All protocol logic must be testable off-device via
+  a pure-JVM module + in-memory fake transport. Real hardware required to validate
+  the Android BLE plumbing itself.
+
+## Module layout
+
+- `:mesh-core` — pure Kotlin, **no Android imports**. Packet encode/decode, dedup
+  cache, relay election, severity rules, ack propagation logic. This is the module
+  that later drives a large-N simulator, so it must not leak any `android.*` or
+  `Bluetooth*` type into its public API. Transport is an interface this module
+  depends on; Android and the simulator each supply an implementation.
+- `:app` — Android application. `BluetoothLeAdvertiser`/`BluetoothLeScanner` plumbing,
+  foreground service, permissions, Compose UI. Implements `mesh-core`'s transport
+  interface by pushing bytes in/out of BLE advertisements.
+- `:mesh-core` test source set — JVM unit tests, table/property-based, no device
+  or emulator needed. This is the primary test target during development.
+
+## Why legacy advertising, not GATT connections
+
+Distress beacons must be non-connectable, best-effort, and require no pairing or
+connection setup — a GATT connection is 1:1 and too slow/fragile for many nodes
+broadcasting into a crowded channel. Everything rides in the advertisement payload
+itself (`BluetoothLeAdvertiser` with `AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY`,
+non-connectable, non-scannable). Scan side uses a `ScanFilter` matching our
+manufacturer ID so we never process unrelated BLE traffic in the room.
+
+**Manufacturer-specific data, not 16-bit service data.** Reasoning: service data
+under a real 16-bit GATT service UUID implies registration/semantics we don't need,
+and manufacturer-specific data gives us the full byte budget under one AD structure
+with a 2-byte company-ID prefix we fully control as a packet magic/version discriminator.
+
+**Known compliance wrinkle, flagging explicitly:** manufacturer-specific data is
+supposed to use a company ID assigned by the Bluetooth SIG. We do not have one and
+are not registering one for a hackathon. We use `0xFFFF` (reserved by the spec for
+testing, never assigned to a real company) as our company ID. This is fine for a
+demo on our own hardware; it is not spec-compliant and could theoretically collide
+with another unregistered device's test traffic in the same room. Not a blocker,
+just don't ship this to production as-is.
+
+## Advertisement byte budget
+
+Legacy (non-extended) advertising: 31 bytes total per PDU.
+- Flags AD structure: 3 bytes (length + type + flags byte) — required for
+  discoverability mode, added by the stack automatically.
+- Manufacturer-specific-data AD structure header: length byte + type byte + 2-byte
+  company ID = 4 bytes.
+- Remaining payload: **31 − 3 − 4 = 24 bytes.**
+
+We do not use BLE 5 extended advertising (bigger payload) because not all target
+devices/chipsets support it reliably and the brief requires this to work on
+whatever real hardware is on hand — legacy advertising is the safe common
+denominator.
+
+## Packet format (`:mesh-core`, `SpandanPacket`)
+
+Fits in **16 bytes**, well inside the 24-byte legacy budget (8 bytes of headroom
+reserved for a future fragment-2 / extended-fields AD structure — e.g. richer ack
+metadata — without touching the fragment-1 layout).
+
+| Field | Bits | Notes |
+|---|---|---|
+| `msg_type` | 2 | 0=SOS, 1=RELAY_META(unused v1), 2=ACK, 3=reserved |
+| `protocol_version` | 3 | forward-compat, up to 8 versions |
+| `hazard_category` | 2 | trapped / stranded / medical / other |
+| `severity` | 3 | 0 (info) – 7 (critical), victim-declared |
+| `origin_id` | 16 | rotating pseudonymous ID, regenerated on each app-level "session" (see below) — never MAC/IMEI |
+| `msg_id` | 16 | random per-origin nonce; uniqueness key for dedup is **(origin_id, msg_id)**, not msg_id alone |
+| `gps_valid` | 1 | 0 = no fix, ignore lat/lon |
+| `lat_q` | 24 | signed, quantized: `round(lat * 2^23 / 180)` → ~2.4 m resolution at the equator |
+| `lon_q` | 24 | signed, quantized: `round(lon * 2^23 / 180)` → ~2.4 m resolution |
+| `baro_valid` | 1 | 0 = no barometer on this device, ignore baro_delta |
+| `baro_delta` | 8 | signed, units of 0.1 hPa vs. device's own boot-time baseline; ±12.7 hPa range, enough to see "fell/is buried" pressure shifts |
+| `battery_bucket` | 3 | 8 buckets, ~12.5% each — battery is a role-election input, not a display exact-percent, so bucketing is correct not lossy-for-no-reason |
+| `liveness_bucket` | 3 | time-since-last-motion, exponential buckets (e.g. <1min, <5min, <15min, <1h, <4h, <12h, <24h, >24h) — coarse is fine, this only gates relay-vs-beacon role |
+| `origin_ts` | 8 | seconds-since-origination mod 256 (rolls every 256s / ~4.3min); used for freshness/jitter comparisons, not wall-clock. Full epoch millis doesn't fit and isn't needed — relative recency is all dedup/TTL logic needs |
+| `hop_count` | 4 | 0–15; incremented per relay, compared against severity-weighted hop TTL |
+| reserved | 6 | pad to 128 bits, future use (e.g. gateway-designation flag) |
+
+Total: 2+3+2+3+16+16+1+24+24+1+8+3+3+8+4+6 = **128 bits = 16 bytes**. Byte-aligned,
+leaves 8 bytes of the 24-byte budget unused in v1.
+
+**`msg_id` collision resistance:** brief calls for "collision-resistant enough for a
+few thousand nodes." A bare 16-bit `msg_id` has a ~1-in-few-thousand birthday
+collision risk per origin, which would be a real problem if `msg_id` alone were the
+dedup key. Fix: dedup key is the **pair** `(origin_id, msg_id)` — 32 bits of entropy
+— which is what actually needs to be collision-resistant across the whole mesh, and
+32 bits comfortably clears "a few thousand nodes ever." `origin_id` itself only
+needs to avoid collision among concurrently-active nodes in one mesh (dozens–low
+hundreds), which 16 bits handles fine.
+
+**`origin_id` rotation:** not a permanent identifier. Generated fresh (random 16
+bits) once per mesh session — i.e. on "start mesh" tap — and held for the whole
+session. Decided: simplest option, keeps dedup/ack continuity intact for an SOS's
+whole lifecycle; anti-tracking is a secondary concern next to "the ack has to
+actually find its way back" for a hackathon demo.
+
+**Ack packets (`msg_type = ACK`)** reuse the same 16-byte envelope: `origin_id`
+carries the *original SOS's* origin_id (i.e. "this ack is for you"), `msg_id`
+echoes the SOS's msg_id, `hop_count` counts ack hops back, other fields are
+reserved/zero. This means ack routing is just "does this node recognize
+origin_id/msg_id as one it's seen and cares about" — no separate ack-routing table
+needed beyond the existing seen-packet cache.
+
+## Dedup, cache, relay (Stage 3+)
+
+- Seen-packet cache keyed on `(origin_id, msg_id)`, bounded size, in `:mesh-core`.
+- Never re-emit a packet whose key is already in cache.
+- On receive: if new, cache it, increment `hop_count`, schedule a rebroadcast after
+  `base_interval ± jitter` (jitter is mandatory — synchronized relays collide).
+- TTL check: drop (don't cache, don't relay) if `hop_count` already at/over the
+  severity-weighted hop ceiling.
+- Eviction when cache is full: lowest `severity` first, then oldest `origin_ts`
+  among ties.
+- All of this lives in `:mesh-core` against a `Transport` interface — Android's BLE
+  advertiser/scanner and the JVM fake transport both implement the same interface,
+  so relay/dedup/election code is identical in both.
+
+## Severity-weighted config (Stage 4)
+
+Single `SeverityConfig` data class (or similar) mapping `severity -> {rebroadcast
+interval, cache TTL, hop TTL, eviction weight}`. One flag flips between "naive
+flooding" (flat config, ignore severity) and "weighted" (real curve) for demo
+purposes.
+
+## Gateway designation (Stage 7)
+
+Manual: a UI toggle ("I am gateway") on the responder's phone. No auto-detection.
+That node, on receiving any SOS, emits an ACK packet (see packet format above)
+which relays back through the mesh like any other packet, keyed to the SOS's
+`(origin_id, msg_id)`. Origin node recognizes an ACK matching its own `origin_id`
+and flips its own UI state from "broadcasting" to "acknowledged."
+
+## Role election (Stage 6)
+
+Inputs: battery bucket, observed neighbour count, motionless-duration. Roles:
+`RELAY` / `BEACON` / `DEEP_BEACON`. Also: advertising interval widens as observed
+neighbour count rises (density-adaptive duty cycling), independent of role.
+
+## Build & test commands
+
+Project not yet scaffolded (Gradle files land in Stage 1 commit). Once scaffolded:
+
+- `./gradlew :mesh-core:test` — pure-JVM protocol/unit tests, no device needed. Run
+  this constantly during Stage 2–4 development.
+- `./gradlew :app:assembleDebug` — build the APK for sideloading onto test phones.
+- `./gradlew :app:installDebug` — install to a connected/adb-visible device.
+- Fake-transport simulation harness lives under `:mesh-core` test sources (or a
+  `:mesh-sim` module if it grows beyond test-scope) — N virtual nodes, configurable
+  adjacency graph and packet loss, drives the exact same relay/dedup/election code
+  the app uses.
+
+## Known hard limits (not hidden, not silently worked around)
+
+- BLE-through-walls range will be bad — expect single-digit to low-tens-of-meters
+  indoors through rubble/walls, not open-air BLE range numbers. Real hardware
+  testing will tell us the actual number; don't plan the demo around optimistic
+  range.
+- 24-byte legacy advertising budget is genuinely tight. Packet is designed to fit
+  in 16 bytes precisely so we're not fighting the budget; if a future field doesn't
+  fit, that will be raised explicitly rather than silently truncating something.
+- Devices without a barometer report `baro_valid = 0` and the field is ignored,
+  never a fake zero (zero is a valid delta reading).
+- No GPS fix reports `gps_valid = 0`, same principle.
+- MAC randomization is not fought — we never rely on MAC identity; `origin_id` is
+  our own application-layer identifier for exactly this reason.
+- iOS out of scope by design (no BLE peripheral-mode background advertising
+  parity story on iOS worth building around for this).

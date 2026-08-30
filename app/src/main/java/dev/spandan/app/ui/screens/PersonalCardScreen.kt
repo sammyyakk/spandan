@@ -20,16 +20,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import dev.spandan.app.ui.theme.SpandanColors
 import dev.spandan.app.ui.theme.SpandanShape
 import dev.spandan.app.ui.theme.SpandanSpacing
+import dev.spandan.app.ble.VoiceNoteRecorder
+import dev.spandan.app.ble.WifiDirectTransport
 import dev.spandan.mesh.PersonalCard
+import java.io.File
 
 /**
  * Optional personal profile, filled in whenever the user wants, never pushed
  * on them. Empty card, full function -- nothing here is required, and
  * leaving every field blank is a completely valid, supported state.
+ *
+ * "Send to nearby responder" attaches this card (plus a voicenote, if
+ * recorded) and pushes it over Wi-Fi Direct to whatever peer is nearby --
+ * same-room only, no mesh relay (see CLAUDE.md and WifiDirectTransport's own
+ * doc comment on why this is unverified on real hardware in this session).
  */
 @Composable
 fun PersonalCardScreen(card: PersonalCard, onSave: (PersonalCard) -> Unit, onBack: () -> Unit) {
@@ -40,17 +49,24 @@ fun PersonalCardScreen(card: PersonalCard, onSave: (PersonalCard) -> Unit, onBac
     var peopleWithThem by remember { mutableStateOf(card.peopleWithThem.toString()) }
     var note by remember { mutableStateOf(card.note) }
 
+    val context = LocalContext.current
+    val recorder = remember { VoiceNoteRecorder(context) }
+    val transport = remember { WifiDirectTransport(context) }
+    var isRecording by remember { mutableStateOf(false) }
+    var voiceNoteFile by remember { mutableStateOf<File?>(null) }
+    var sendStatus by remember { mutableStateOf("") }
+
+    fun currentCard() = PersonalCard(
+        bloodGroup = bloodGroup,
+        allergiesOrMedicalNeeds = allergies,
+        emergencyContactName = contactName,
+        emergencyContactNumber = contactNumber,
+        peopleWithThem = peopleWithThem.toIntOrNull() ?: 0,
+        note = note,
+    )
+
     fun save() {
-        onSave(
-            PersonalCard(
-                bloodGroup = bloodGroup,
-                allergiesOrMedicalNeeds = allergies,
-                emergencyContactName = contactName,
-                emergencyContactNumber = contactNumber,
-                peopleWithThem = peopleWithThem.toIntOrNull() ?: 0,
-                note = note,
-            )
-        )
+        onSave(currentCard())
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize().background(SpandanColors.Surface).padding(SpandanSpacing.md)) {
@@ -75,6 +91,46 @@ fun PersonalCardScreen(card: PersonalCard, onSave: (PersonalCard) -> Unit, onBac
         item { CardField("Emergency contact number", contactNumber, { contactNumber = it; save() }, KeyboardType.Phone) }
         item { CardField("People currently with you", peopleWithThem, { peopleWithThem = it.filter { c -> c.isDigit() }; save() }, KeyboardType.Number) }
         item { CardField("Note", note, { note = it; save() }) }
+        item {
+            Text(
+                if (isRecording) "Stop voicenote" else if (voiceNoteFile != null) "Re-record voicenote" else "Record voicenote",
+                color = SpandanColors.OnSurface,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .padding(bottom = SpandanSpacing.sm)
+                    .clickable {
+                        if (isRecording) {
+                            voiceNoteFile = recorder.stop()
+                            isRecording = false
+                        } else {
+                            runCatching { recorder.start() }
+                            isRecording = true
+                        }
+                    },
+            )
+            if (voiceNoteFile != null && !isRecording) {
+                Text("Voicenote attached", color = SpandanColors.OnSurfaceMuted, fontSize = 18.sp, modifier = Modifier.padding(bottom = SpandanSpacing.sm))
+            }
+            Text(
+                "Send to nearby responder",
+                color = SpandanColors.Hazard,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .padding(bottom = SpandanSpacing.xs)
+                    .clickable {
+                        val payload = currentCard().encode() + (voiceNoteFile?.readBytes() ?: ByteArray(0))
+                        sendStatus = "Looking for a nearby device…"
+                        transport.discoverAndSend(payload) { success, message ->
+                            sendStatus = if (success) "Sent" else "Couldn't send: $message"
+                        }
+                    },
+            )
+            if (sendStatus.isNotEmpty()) {
+                Text(sendStatus, color = SpandanColors.OnSurfaceMuted, fontSize = 18.sp)
+            }
+        }
         item {
             Text(
                 "Back",

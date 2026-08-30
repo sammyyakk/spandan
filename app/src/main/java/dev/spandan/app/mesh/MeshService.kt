@@ -87,6 +87,7 @@ class MeshService : Service() {
             onEvent = { event ->
                 mainHandler.post {
                     if (event is MeshEvent.Acknowledged) updateNotification("acknowledged")
+                    trackForDashboard(event)
                     listener?.invoke(event)
                 }
             },
@@ -170,6 +171,46 @@ class MeshService : Service() {
 
     /** Manual pin-drop path for when there's no real GPS fix -- never a blocking error. */
     fun setManualLocation(lat: Double, lon: Double) = locationProvider.setManualLocation(lat, lon)
+
+    // --- minimal dashboard (Settings: Responder mode) ---------------------------------------
+
+    private val dashboardSignals = LinkedHashMap<Long, dev.spandan.app.ui.screens.ReceivedSignal>()
+    private var dashboardServer: DashboardServer? = null
+
+    private fun trackForDashboard(event: MeshEvent) {
+        when {
+            event is MeshEvent.Received && event.packet.msgType == dev.spandan.mesh.MsgType.SOS -> {
+                val key = event.packet.dedupKey()
+                if (!dashboardSignals.containsKey(key)) {
+                    dashboardSignals[key] = dev.spandan.app.ui.screens.ReceivedSignal(event.packet, System.currentTimeMillis(), false)
+                }
+            }
+            event is MeshEvent.Sent && event.packet.msgType == dev.spandan.mesh.MsgType.ACK -> {
+                val sosKey = (dev.spandan.mesh.MsgType.SOS.bits.toLong() shl 32) or
+                    (event.packet.originId.toLong() shl 16) or event.packet.msgId.toLong()
+                dashboardSignals[sosKey]?.let { dashboardSignals[sosKey] = it.copy(acknowledged = true) }
+            }
+        }
+    }
+
+    /** Returns the local port once started, so the UI can show "visit http://<ip>:<port>". */
+    fun startDashboard(): Int {
+        val server = dashboardServer ?: DashboardServer { dashboardSignals.values.toList() }.also { dashboardServer = it }
+        return server.start()
+    }
+
+    fun stopDashboard() {
+        dashboardServer?.stop()
+        dashboardServer = null
+    }
+
+    fun localIpAddress(): String? {
+        val wifi = getSystemService(WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return null
+        @Suppress("DEPRECATION")
+        val ip = wifi.connectionInfo?.ipAddress ?: return null
+        if (ip == 0) return null
+        return "%d.%d.%d.%d".format(ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff)
+    }
 
     fun snapshot(): MeshSnapshot = MeshSnapshot(
         originId = meshNode.originId,

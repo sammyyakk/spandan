@@ -32,7 +32,9 @@ import dev.spandan.app.ui.theme.SpandanSpacing
 fun SettingsScreen(
     settings: AppSettings,
     lowPowerSuggested: Boolean,
+    dashboardUrl: String?,
     onChange: (AppSettings) -> Unit,
+    onToggleDashboard: (Boolean) -> Unit,
     onOpenDevPanel: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -67,6 +69,15 @@ fun SettingsScreen(
         }
         SettingRow("Responder mode", "For rescue-command devices only: shows received signals instead of the victim screen, and lets this device acknowledge them.", settings.responderMode) {
             onChange(settings.copy(responderMode = it))
+        }
+
+        if (settings.responderMode) {
+            SettingRow("Laptop dashboard", "Serves a bare-bones live view of received signals over this phone's Wi-Fi -- open the address below from a laptop on the same network.", dashboardUrl != null) {
+                onToggleDashboard(it)
+            }
+            if (dashboardUrl != null) {
+                Text(dashboardUrl, color = SpandanColors.Hazard, fontSize = 18.sp, modifier = Modifier.padding(bottom = SpandanSpacing.md))
+            }
         }
 
         Text(

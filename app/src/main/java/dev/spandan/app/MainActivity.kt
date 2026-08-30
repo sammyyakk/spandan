@@ -208,14 +208,29 @@ private fun AppRoot(
                 )
             }
             showSettings -> {
+                var dashboardUrl by remember { mutableStateOf<String?>(null) }
                 SettingsScreen(
                     settings = settings,
                     lowPowerSuggested = service?.shouldSuggestLowPower() ?: false,
+                    dashboardUrl = dashboardUrl,
                     onChange = { updated ->
                         settings = updated
                         settingsStore.save(updated)
                         repository.setLowPowerMode(updated.lowPowerMode)
                         if (updated.responderMode) repository.setGateway(true)
+                    },
+                    onToggleDashboard = { enable ->
+                        val s = service
+                        if (s == null) {
+                            dashboardUrl = null
+                        } else if (enable) {
+                            val port = s.startDashboard()
+                            val ip = s.localIpAddress() ?: "this-device"
+                            dashboardUrl = "http://$ip:$port"
+                        } else {
+                            s.stopDashboard()
+                            dashboardUrl = null
+                        }
                     },
                     onOpenDevPanel = { showDevPanel = true; showSettings = false },
                     onBack = { showSettings = false },

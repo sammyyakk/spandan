@@ -235,6 +235,13 @@ Pixel 10a `origin=0x9FBA` as gateway): SOS sent → Pixel received, relayed
 visibly dropping the flood's duplicate copies (`DROPPED reason=DUPLICATE`) on
 both sides throughout.
 
+**Screen-off durability spot check:** locked the Nothing 3a's screen for 20s
+while the mesh service was running; `dumpsys activity services` confirmed
+`isForeground=true`, `types=0x10` (`connectedDevice`), process still alive
+throughout. Not a multi-hour doze/battery-drain test — that needs real time
+this session doesn't have — but the immediate "does it get killed the moment
+the screen turns off" failure mode is ruled out.
+
 ## Stage 1 — verified on real hardware (2026-08-30)
 
 Three phones: Nothing Phone 3a (Android, `origin_id 0xA174`), Samsung S23 Ultra

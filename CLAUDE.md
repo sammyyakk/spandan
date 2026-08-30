@@ -172,6 +172,26 @@ local.properties` on a new machine). Gradle 8.9 via the committed wrapper.
   adjacency graph and packet loss, drives the exact same relay/dedup/election code
   the app uses.
 
+## Stage 1 — verified on real hardware (2026-08-30)
+
+Three phones: Nothing Phone 3a (Android, `origin_id 0xA174`), Samsung S23 Ultra
+(`0xE438`), Pixel 10a (`0xEDCC`). All three advertising + scanning
+simultaneously in the same room. Confirmed: S23 received Nothing 3a's packet
+(`origin=0xa174 severity=5 hop=0`) live; both S23 and Nothing 3a also logged
+packets from origin `0xedcc` (Pixel), including after the Pixel's USB/adb
+connection dropped — the app kept advertising/scanning fine with no cable
+attached, confirming this isn't an artifact of the debug tether.
+
+Real RSSI observed at close range (same room, few meters, screens on):
+**-43 to -63 dBm.** Gives a concrete anchor for range planning later — no
+optimism needed, no walls tested yet.
+
+Samsung-specific hiccup hit during setup: `AdvertiseCallback.onStartFailure`
+with code 4 (`ADVERTISE_FAILED_INTERNAL_ERROR`) on the S23 right after fresh
+install + permission grant. Fixed by toggling Bluetooth off/on once; did not
+recur. Worth a retry-with-backoff in the advertiser wrapper before Stage 5
+(foreground service) if it turns out to be common across Samsung devices.
+
 ## Known hard limits (not hidden, not silently worked around)
 
 - BLE-through-walls range will be bad — expect single-digit to low-tens-of-meters

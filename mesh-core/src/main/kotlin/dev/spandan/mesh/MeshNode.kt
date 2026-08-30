@@ -30,17 +30,58 @@ class MeshNode(
     private val neighbours = NeighbourTracker(clock)
     private val pendingAcks = HashSet<Int>() // msgIds of our own SOS packets awaiting ack
     private val ackedMsgIds = HashSet<Int>()
+    private var lastKnownBatteryBucket = 7
 
     init {
-        transport.onReceive { bytes -> handleIncoming(bytes) }
+        transport.onReceive { bytes, rssi -> handleIncoming(bytes, rssi) }
+        sendHeartbeat()
+        scheduleNextHeartbeat()
+    }
+
+    /**
+     * Every node continuously broadcasts a lightweight presence beacon
+     * (`msgType = RELAY_META`), independent of any SOS — this is what makes
+     * "who's nearby" automatic the instant two nodes are both running, with no
+     * pairing or discovery step. Single-hop only: never flood-relayed (that
+     * would turn idle presence into a broadcast storm). Interval widens as
+     * neighbour count rises (density-adaptive duty cycling, Stage 6).
+     */
+    private fun sendHeartbeat() {
+        val packet = SpandanPacket(
+            msgType = MsgType.RELAY_META,
+            protocolVersion = 0,
+            hazardCategory = HazardCategory.OTHER,
+            severity = 0,
+            originId = originId,
+            msgId = 0,
+            location = QuantizedLocation.noFix(),
+            baroValid = false,
+            baroDeltaDeciHpa = 0,
+            batteryBucket = lastKnownBatteryBucket,
+            livenessBucket = 0,
+            originTs = (clock.nowMillis() / 1000 % 256).toInt(),
+            hopCount = 0,
+        )
+        sendNow(packet)
+    }
+
+    private fun scheduleNextHeartbeat() {
+        scheduler.schedule(DutyCycle.advertiseIntervalMs(neighbourCount())) {
+            sendHeartbeat()
+            scheduleNextHeartbeat()
+        }
     }
 
     fun neighbourCount(): Int = neighbours.count()
+
+    /** Every nearby node heard recently — automatic the moment both sides are running; no pairing/discovery step. */
+    fun nearbyDevices(): List<NeighbourInfo> = neighbours.snapshot()
 
     fun isAcknowledged(msgId: Int): Boolean = msgId in ackedMsgIds
 
     /** Re-evaluates [role] from freshly sampled inputs. Call this periodically from the host. */
     fun updateRole(inputs: RoleInputs, config: RoleElectionConfig = RoleElectionConfig()) {
+        lastKnownBatteryBucket = inputs.batteryBucket
         val newRole = RoleElection.evaluate(inputs, config)
         if (newRole != role) {
             role = newRole
@@ -127,13 +168,21 @@ class MeshNode(
         return baseMs + jitter
     }
 
-    private fun handleIncoming(bytes: ByteArray) {
+    private fun handleIncoming(bytes: ByteArray, rssi: Int?) {
         val packet = runCatching { SpandanPacket.decode(bytes) }.getOrElse {
             onEvent(MeshEvent.Dropped(DropReason.DECODE_FAILED, null))
             return
         }
 
-        neighbours.record(packet.originId)
+        neighbours.record(packet, rssi)
+
+        if (packet.msgType == MsgType.RELAY_META) {
+            // Presence-only: never flood-relayed, never cached for dedup/ack —
+            // just proves a neighbour is here. Relaying these would turn idle
+            // presence into a broadcast storm.
+            onEvent(MeshEvent.Received(packet))
+            return
+        }
 
         // Recognize an ack addressed to us before dedup — it always carries our own originId.
         if (packet.msgType == MsgType.ACK && packet.originId == originId) {

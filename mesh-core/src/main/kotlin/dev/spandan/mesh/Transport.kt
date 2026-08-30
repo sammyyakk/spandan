@@ -9,8 +9,12 @@ interface Transport {
     /** Broadcasts encoded packet bytes to whatever's listening. Fire-and-forget. */
     fun send(bytes: ByteArray)
 
-    /** Registers the single listener for inbound bytes. Called once, at node setup. */
-    fun onReceive(listener: (bytes: ByteArray) -> Unit)
+    /**
+     * Registers the single listener for inbound bytes. Called once, at node setup.
+     * [rssi] is signal strength when the transport can supply it (real BLE), null
+     * otherwise (the fake-transport simulator has no physical radio to measure).
+     */
+    fun onReceive(listener: (bytes: ByteArray, rssi: Int?) -> Unit)
 }
 
 interface Clock {

@@ -121,6 +121,9 @@ class MeshService : Service() {
         meshNode.severityConfig = if (enabled) SeverityConfig.WEIGHTED else SeverityConfig.NAIVE_FLOODING
     }
 
+    /** Every nearby node heard recently — automatic the moment both sides are running. */
+    fun nearbyDevices() = meshNode.nearbyDevices()
+
     fun snapshot(): MeshSnapshot = MeshSnapshot(
         originId = meshNode.originId,
         role = meshNode.role,

@@ -22,17 +22,17 @@ class FakeMeshNetwork(
         transports.getOrPut(nodeIndex) { FakeTransport(nodeIndex) }
 
     private inner class FakeTransport(private val nodeIndex: Int) : Transport {
-        private var listener: ((ByteArray) -> Unit)? = null
+        private var listener: ((ByteArray, Int?) -> Unit)? = null
 
         override fun send(bytes: ByteArray) {
             for (neighbour in adjacency[nodeIndex].orEmpty()) {
                 if (random.nextDouble() >= lossRate) {
-                    transports[neighbour]?.listener?.invoke(bytes)
+                    transports[neighbour]?.listener?.invoke(bytes, null)
                 }
             }
         }
 
-        override fun onReceive(listener: (bytes: ByteArray) -> Unit) {
+        override fun onReceive(listener: (bytes: ByteArray, rssi: Int?) -> Unit) {
             this.listener = listener
         }
     }

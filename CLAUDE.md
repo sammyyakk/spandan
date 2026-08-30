@@ -75,7 +75,7 @@ metadata — without touching the fragment-1 layout).
 
 | Field | Bits | Notes |
 |---|---|---|
-| `msg_type` | 2 | 0=SOS, 1=RELAY_META(unused v1), 2=ACK, 3=reserved |
+| `msg_type` | 2 | 0=SOS, 1=RELAY_META (presence heartbeat — single-hop only, never flood-relayed), 2=ACK, 3=reserved |
 | `protocol_version` | 3 | forward-compat, up to 8 versions |
 | `hazard_category` | 2 | trapped / stranded / medical / other |
 | `severity` | 3 | 0 (info) – 7 (critical), victim-declared |
@@ -201,6 +201,30 @@ local.properties` on a new machine). Gradle 8.9 via the committed wrapper.
   cache eviction/expiry, neighbour-window aging, role thresholds, duty-cycle
   cap, and the full ack round trip (including the dedup-key collision this
   would have hit without the `msgType` fix above).
+
+## Presence heartbeat + nearby-devices roster (2026-08-30)
+
+**Real gap caught by the user after Stage 7 verification:** the original
+design only had `MeshNode` transmit when there was an SOS/ACK to send —
+tapping Start didn't broadcast anything on its own, so two idle nodes never
+discovered each other. Fixed by giving every node a continuous lightweight
+presence beacon (`msgType = RELAY_META`, previously unused), sent immediately
+on start and re-sent on `DutyCycle.advertiseIntervalMs(neighbourCount())` —
+this is also exactly the density-adaptive duty cycling Stage 6 asked for, not
+a separate mechanism. Heartbeats are single-hop only: never cached for
+dedup/TTL, never flood-relayed (would turn idle presence into a broadcast
+storm) — `handleIncoming` special-cases `RELAY_META` to record the neighbour
+and return immediately.
+
+`NeighbourTracker` upgraded from a bare count to a full roster
+(`NeighbourInfo`: originId, last-seen time, RSSI, last hazard/severity/msgType),
+exposed as `MeshNode.nearbyDevices()` and shown live in the UI. `Transport`'s
+`onReceive` signature grew an `rssi: Int?` parameter to carry this through
+from real BLE scans (simulator passes `null`, no radio to measure).
+
+Verified on hardware: two phones, both idle (no SOS sent), each appears in
+the other's "nearby devices" row within ~10s of tapping Start — fully
+automatic, no pairing or discovery action needed.
 
 ## :app integration — Stages 5, 6, 7 wired (2026-08-30)
 

@@ -30,10 +30,10 @@ class BleTransport(context: Context, private val burstDurationMs: Long = 1_500L)
         }
     }
 
-    override fun onReceive(listener: (bytes: ByteArray) -> Unit) {
+    override fun onReceive(listener: (bytes: ByteArray, rssi: Int?) -> Unit) {
         started = true
         scanner.start(
-            onEvent = { event -> listener(event.rawBytes) },
+            onEvent = { event -> listener(event.rawBytes, event.rssi) },
             onResult = { success, message -> onStatus(burstActive, success, message) },
         )
     }

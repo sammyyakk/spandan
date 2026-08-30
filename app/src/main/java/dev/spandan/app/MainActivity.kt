@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,7 @@ import dev.spandan.app.mesh.MeshSnapshot
 import dev.spandan.mesh.DropReason
 import dev.spandan.mesh.HazardCategory
 import dev.spandan.mesh.MeshEvent
+import dev.spandan.mesh.NeighbourInfo
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -104,6 +106,7 @@ private fun SpandanScreen(service: MeshService?, onStart: () -> Unit, onStop: ()
     var running by remember { mutableStateOf(false) }
     var permissionMessage by remember { mutableStateOf("") }
     var snapshot by remember { mutableStateOf<MeshSnapshot?>(null) }
+    var nearby by remember { mutableStateOf<List<NeighbourInfo>>(emptyList()) }
     var severity by remember { mutableStateOf(5) }
     var hazard by remember { mutableStateOf(HazardCategory.TRAPPED) }
     val log = remember { mutableStateListOf<String>() }
@@ -130,6 +133,7 @@ private fun SpandanScreen(service: MeshService?, onStart: () -> Unit, onStop: ()
     LaunchedEffect(service) {
         while (true) {
             snapshot = service?.snapshot()
+            nearby = service?.nearbyDevices() ?: emptyList()
             delay(1_000)
         }
     }
@@ -166,6 +170,11 @@ private fun SpandanScreen(service: MeshService?, onStart: () -> Unit, onStop: ()
             Switch(checked = s?.weightedPropagation ?: true, onCheckedChange = { service?.setWeightedPropagation(it) })
         }
 
+        Text("nearby devices (${nearby.size}):", style = MaterialTheme.typography.titleSmall)
+        LazyRow(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            items(nearby) { n -> Text(describeNeighbour(n) + "   ") }
+        }
+
         Text("hazard: ${hazard.name}  severity: $severity")
         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             for (h in HazardCategory.entries) {
@@ -185,6 +194,9 @@ private fun SpandanScreen(service: MeshService?, onStart: () -> Unit, onStop: ()
         }
     }
 }
+
+private fun describeNeighbour(n: NeighbourInfo): String =
+    "0x${n.originId.toString(16).uppercase()} ${n.lastRssi?.let { "${it}dBm" } ?: ""} sev=${n.lastSeverity}"
 
 private fun describe(event: MeshEvent): String = when (event) {
     is MeshEvent.Sent -> "SENT origin=0x${event.packet.originId.toString(16)} type=${event.packet.msgType} sev=${event.packet.severity} hop=${event.packet.hopCount}"

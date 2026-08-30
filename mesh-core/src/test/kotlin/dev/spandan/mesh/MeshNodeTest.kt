@@ -72,7 +72,7 @@ class MeshNodeChainRelayTest {
         a.originateSos(HazardCategory.TRAPPED, 5, QuantizedLocation.noFix(), false, 0, 7, 0)
         h.advance(30_000)
 
-        val received = h.events[2]!!.filterIsInstance<MeshEvent.Received>()
+        val received = h.events[2]!!.filterIsInstance<MeshEvent.Received>().filter { it.packet.msgType == MsgType.SOS }
         assertEquals(1, received.size)
         assertEquals(1, received.first().packet.hopCount)
 
@@ -112,7 +112,10 @@ class MeshNodeChainRelayTest {
         a.originateSos(HazardCategory.OTHER, severity = 0, QuantizedLocation.noFix(), false, 0, 7, 0)
         h.advance(60_000)
 
-        assertTrue(h.events[5]!!.filterIsInstance<MeshEvent.Received>().isEmpty(), "packet should not survive 5 hops at severity 0")
+        assertTrue(
+            h.events[5]!!.filterIsInstance<MeshEvent.Received>().none { it.packet.msgType == MsgType.SOS },
+            "packet should not survive 5 hops at severity 0",
+        )
         assertTrue(h.countOf(4) { it is MeshEvent.Dropped && (it as MeshEvent.Dropped).reason == DropReason.TTL_EXCEEDED } >= 1)
         assertEquals(0, h.countOf(5) { it is MeshEvent.Relayed }, "end node never even attempts a relay")
     }
@@ -129,7 +132,10 @@ class MeshNodeChainRelayTest {
         a.originateSos(HazardCategory.MEDICAL, severity = 7, QuantizedLocation.noFix(), false, 0, 7, 0)
         h.advance(60_000)
 
-        assertTrue(h.events[5]!!.filterIsInstance<MeshEvent.Received>().isNotEmpty(), "severity 7 packet should reach the far end")
+        assertTrue(
+            h.events[5]!!.filterIsInstance<MeshEvent.Received>().any { it.packet.msgType == MsgType.SOS },
+            "severity 7 packet should reach the far end",
+        )
     }
 
     @Test
@@ -185,10 +191,11 @@ class MeshNodeAckPathTest {
         a.originateSos(HazardCategory.TRAPPED, 6, QuantizedLocation.noFix(), false, 0, 3, 0)
         h.advance(120_000)
 
-        val sentCountAtAck = h.countOf(0) { it is MeshEvent.Sent }
+        fun sosSends() = h.countOf(0) { it is MeshEvent.Sent && it.packet.msgType == MsgType.SOS }
+        val sentCountAtAck = sosSends()
         h.advance(120_000)
-        val sentCountLater = h.countOf(0) { it is MeshEvent.Sent }
-        assertEquals(sentCountAtAck, sentCountLater, "no further repeats after acknowledgement")
+        val sentCountLater = sosSends()
+        assertEquals(sentCountAtAck, sentCountLater, "no further SOS repeats after acknowledgement (heartbeats aside)")
     }
 }
 
@@ -267,12 +274,26 @@ class NeighbourTrackerTest {
     fun `counts distinct recent origins and forgets stale ones`() {
         val clock = VirtualClock()
         val tracker = NeighbourTracker(clock, windowMillis = 1_000)
-        tracker.record(0xAAA)
-        tracker.record(0xBBB)
-        tracker.record(0xAAA) // duplicate, shouldn't double count
+        tracker.record(testSos(originId = 0xAAA), rssi = -50)
+        tracker.record(testSos(originId = 0xBBB), rssi = -60)
+        tracker.record(testSos(originId = 0xAAA), rssi = -55) // duplicate, shouldn't double count
         assertEquals(2, tracker.count())
 
         clock.now = 2_000
         assertEquals(0, tracker.count(), "stale sightings should age out of the window")
+    }
+
+    @Test
+    fun `snapshot exposes rssi and last-seen packet metadata, most recent first`() {
+        val clock = VirtualClock()
+        val tracker = NeighbourTracker(clock)
+        tracker.record(testSos(originId = 0xAAA, severity = 3), rssi = -50)
+        clock.now = 100
+        tracker.record(testSos(originId = 0xBBB, severity = 6), rssi = -40)
+
+        val snapshot = tracker.snapshot()
+        assertEquals(listOf(0xBBB, 0xAAA), snapshot.map { it.originId })
+        assertEquals(-40, snapshot.first { it.originId == 0xBBB }.lastRssi)
+        assertEquals(6, snapshot.first { it.originId == 0xBBB }.lastSeverity)
     }
 }

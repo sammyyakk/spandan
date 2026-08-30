@@ -154,11 +154,18 @@ neighbour count rises (density-adaptive duty cycling), independent of role.
 
 ## Build & test commands
 
-Project not yet scaffolded (Gradle files land in Stage 1 commit). Once scaffolded:
+Environment: JDK 17 pinned via `gradle.properties` (`org.gradle.java.home`) — the
+system default JDK (26) is too new for this AGP/Kotlin toolchain, so don't rely on
+`JAVA_HOME`/`archlinux-java` here. Android SDK (cmdline-tools, platform 34,
+build-tools 34.0.0) lives under `~/Android/Sdk`, pointed to by `local.properties`
+(gitignored, machine-specific — regenerate with `echo sdk.dir=$ANDROID_SDK_ROOT >
+local.properties` on a new machine). Gradle 8.9 via the committed wrapper.
 
 - `./gradlew :mesh-core:test` — pure-JVM protocol/unit tests, no device needed. Run
-  this constantly during Stage 2–4 development.
+  this constantly during Stage 2–4 development. Verified green: 9 tests incl. a
+  2000-sample randomized round-trip and all documented boundary values.
 - `./gradlew :app:assembleDebug` — build the APK for sideloading onto test phones.
+  Verified green.
 - `./gradlew :app:installDebug` — install to a connected/adb-visible device.
 - Fake-transport simulation harness lives under `:mesh-core` test sources (or a
   `:mesh-sim` module if it grows beyond test-scope) — N virtual nodes, configurable

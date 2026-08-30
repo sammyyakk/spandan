@@ -79,23 +79,41 @@ class MeshNode(
         return msgId
     }
 
-    /** Sends [packet] now and schedules [repeatCount] more jittered re-sends — used for both self-originated SOS and gateway-originated ACKs. */
+    /**
+     * Sends [packet] now and keeps it alive afterward:
+     *  - an SOS re-sends indefinitely, on jittered severity-weighted intervals,
+     *    until acknowledged — "broadcasting" is meant to persist until someone
+     *    answers, not stop after an arbitrary count. [isAcknowledged] gates it.
+     *  - an ACK (or anything else we originate) only needs enough redundancy to
+     *    get picked up by the flood once, so it uses a small finite repeat count.
+     */
     private fun originate(packet: SpandanPacket) {
         val key = packet.dedupKey()
         cache.insert(key, packet)
         cache.markRelayed(key) // we originated it; never "relay" our own packet via the foreign-packet path
         sendNow(packet)
-        scheduleRepeats(packet, repeatsLeft = repeatCount)
+        if (packet.msgType == MsgType.SOS) {
+            scheduleUntilAcked(packet)
+        } else {
+            scheduleFiniteRepeats(packet, repeatsLeft = repeatCount)
+        }
     }
 
-    private fun scheduleRepeats(packet: SpandanPacket, repeatsLeft: Int) {
+    private fun scheduleUntilAcked(packet: SpandanPacket) {
+        val delay = jitteredDelay(severityConfig.rebroadcastIntervalMs(packet.severity))
+        scheduler.schedule(delay) {
+            if (isAcknowledged(packet.msgId)) return@schedule
+            sendNow(packet)
+            scheduleUntilAcked(packet)
+        }
+    }
+
+    private fun scheduleFiniteRepeats(packet: SpandanPacket, repeatsLeft: Int) {
         if (repeatsLeft <= 0) return
         val delay = jitteredDelay(severityConfig.rebroadcastIntervalMs(packet.severity))
         scheduler.schedule(delay) {
-            // Stop re-sending our own SOS once it's been acknowledged.
-            if (packet.msgType == MsgType.SOS && packet.originId == originId && isAcknowledged(packet.msgId)) return@schedule
             sendNow(packet)
-            scheduleRepeats(packet, repeatsLeft - 1)
+            scheduleFiniteRepeats(packet, repeatsLeft - 1)
         }
     }
 

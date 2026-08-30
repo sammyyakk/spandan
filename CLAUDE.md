@@ -202,6 +202,39 @@ local.properties` on a new machine). Gradle 8.9 via the committed wrapper.
   cap, and the full ack round trip (including the dedup-key collision this
   would have hit without the `msgType` fix above).
 
+## :app integration — Stages 5, 6, 7 wired (2026-08-30)
+
+- `BleTransport` — bridges `MeshNode` to real BLE. A legacy advertiser only
+  carries one payload at a time, but `MeshNode.send()` fires once per event
+  (own SOS repeats, foreign relays, acks) and these can overlap, so sends are
+  queued and advertised as ~1.5s back-to-back bursts rather than clobbered.
+- `MeshService` — foreground service (Stage 5): owns the real `MeshNode` +
+  `BleTransport`, samples battery via `ACTION_BATTERY_CHANGED`, samples motion
+  via `TYPE_SIGNIFICANT_MOTION` (device without that sensor gets
+  `motionlessMillis = 0`, i.e. never falsely demoted to DEEP_BEACON —
+  deliberate choice over faking a stillness reading), re-evaluates role every
+  10s, persistent notification, `START_STICKY`.
+- MainActivity binds to the service: Start/Stop, SOS button + hazard-category
+  picker + severity stepper, Gateway toggle, Weighted-vs-naive toggle, live
+  role/battery/neighbour/status display, scrolling event log.
+
+**Real-bug caught during hardware testing:** the first cut of `MeshNode`
+capped an originated SOS's rebroadcast at a fixed `repeatCount` (3) regardless
+of ack state — looked like a runaway "loop" on-device but was actually
+stopping *too early* against the brief's intent ("broadcasting" should persist
+until acknowledged, not for an arbitrary count). Fixed: an SOS now re-sends
+indefinitely on jittered severity-weighted intervals until
+`isAcknowledged(msgId)` is true; only non-SOS originations (i.e. gateway ACKs)
+use the small finite repeat count, since an ACK just needs enough redundancy
+to get picked up by the flood once.
+
+**Verified end-to-end on real hardware** (Nothing 3a `origin=0x4351` sending,
+Pixel 10a `origin=0x9FBA` as gateway): SOS sent → Pixel received, relayed
+(`hop=1`), generated + sent ACK → Nothing 3a received the ACK, flipped
+"broadcasting" → "acknowledged", and stopped repeating immediately. Dedup
+visibly dropping the flood's duplicate copies (`DROPPED reason=DUPLICATE`) on
+both sides throughout.
+
 ## Stage 1 — verified on real hardware (2026-08-30)
 
 Three phones: Nothing Phone 3a (Android, `origin_id 0xA174`), Samsung S23 Ultra

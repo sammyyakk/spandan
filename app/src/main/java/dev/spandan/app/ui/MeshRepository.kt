@@ -43,6 +43,7 @@ interface MeshRepository {
     fun setWeightedPropagation(enabled: Boolean)
     fun sendCommandMessage(message: CommandMessage)
     fun markMessageRead(msgId: Int)
+    fun setLowPowerMode(enabled: Boolean)
 }
 
 /** Category -> default severity, since a panicking one-handed user is never asked to rate severity 0-7 themselves. */
@@ -69,6 +70,12 @@ class RealMeshRepository : MeshRepository {
 
     private val _messages = MutableStateFlow<List<IncomingMessage>>(emptyList())
     override val messages: StateFlow<List<IncomingMessage>> = _messages.asStateFlow()
+
+    // Responder-mode view: every SOS this node has seen, keyed by (originId, msgId).
+    // Not part of the MeshRepository interface -- Responder mode is real-device-only,
+    // no rehearsal path needed for it.
+    private val _receivedSignals = MutableStateFlow<List<dev.spandan.app.ui.screens.ReceivedSignal>>(emptyList())
+    val receivedSignals: StateFlow<List<dev.spandan.app.ui.screens.ReceivedSignal>> = _receivedSignals.asStateFlow()
 
     // The service (not this repository) is the source of truth for whether an
     // SOS is active -- this repository is recreated whenever MainActivity is
@@ -155,6 +162,10 @@ class RealMeshRepository : MeshRepository {
         service?.setGateway(enabled)
     }
 
+    override fun setLowPowerMode(enabled: Boolean) {
+        service?.setLowPowerMode(enabled)
+    }
+
     override fun setWeightedPropagation(enabled: Boolean) {
         service?.setWeightedPropagation(enabled)
     }
@@ -170,6 +181,24 @@ class RealMeshRepository : MeshRepository {
 
     private fun onMeshEvent(event: MeshEvent) {
         val current = _uiState.value
+
+        if (event is MeshEvent.Received && event.packet.msgType == MsgType.SOS) {
+            val key = event.packet.originId to event.packet.msgId
+            val existing = _receivedSignals.value
+            if (existing.none { (it.packet.originId to it.packet.msgId) == key }) {
+                _receivedSignals.value = existing + dev.spandan.app.ui.screens.ReceivedSignal(
+                    packet = event.packet,
+                    receivedAtMillis = System.currentTimeMillis(),
+                    acknowledged = false,
+                )
+            }
+        }
+        if (event is MeshEvent.Sent && event.packet.msgType == MsgType.ACK) {
+            _receivedSignals.value = _receivedSignals.value.map {
+                if (it.packet.originId == event.packet.originId && it.packet.msgId == event.packet.msgId) it.copy(acknowledged = true) else it
+            }
+        }
+
         when {
             event is MeshEvent.Acknowledged && event.msgId == current.msgId -> {
                 _uiState.value = current.copy(status = SosStatus.ACKNOWLEDGED)

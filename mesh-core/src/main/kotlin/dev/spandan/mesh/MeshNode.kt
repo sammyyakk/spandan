@@ -81,10 +81,21 @@ class MeshNode(
 
     fun isAcknowledged(msgId: Int): Boolean = msgId in ackedMsgIds
 
-    /** Re-evaluates [role] from freshly sampled inputs. Call this periodically from the host. */
+    /** Non-null overrides normal election entirely -- e.g. a user-facing "low-power mode" forcing DEEP_BEACON regardless of battery/motion. */
+    var forcedRole: Role? = null
+        set(value) {
+            field = value
+            value?.let { setRole(it) }
+        }
+
+    /** Re-evaluates [role] from freshly sampled inputs. Call this periodically from the host. No-op while [forcedRole] is set. */
     fun updateRole(inputs: RoleInputs, config: RoleElectionConfig = RoleElectionConfig()) {
         lastKnownBatteryBucket = inputs.batteryBucket
-        val newRole = RoleElection.evaluate(inputs, config)
+        if (forcedRole != null) return
+        setRole(RoleElection.evaluate(inputs, config))
+    }
+
+    private fun setRole(newRole: Role) {
         if (newRole != role) {
             role = newRole
             onEvent(MeshEvent.RoleChanged(newRole))

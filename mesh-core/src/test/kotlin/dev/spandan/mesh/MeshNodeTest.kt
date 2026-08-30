@@ -301,6 +301,24 @@ class SeenPacketCacheTest {
     }
 }
 
+class MeshNodeForcedRoleTest {
+    @Test
+    fun `forcedRole overrides updateRole and ignores subsequent election inputs`() {
+        val h = Harness(symmetric(0 to 1))
+        val a = h.node(0, originId = 0xA000)
+        a.forcedRole = Role.DEEP_BEACON
+        assertEquals(Role.DEEP_BEACON, a.role)
+
+        // Inputs that would normally elect RELAY must be ignored while forced.
+        a.updateRole(RoleInputs(batteryBucket = 7, neighbourCount = 0, motionlessMillis = 0))
+        assertEquals(Role.DEEP_BEACON, a.role)
+
+        a.forcedRole = null
+        a.updateRole(RoleInputs(batteryBucket = 7, neighbourCount = 0, motionlessMillis = 0))
+        assertEquals(Role.RELAY, a.role)
+    }
+}
+
 class RoleElectionTest {
     @Test
     fun `healthy battery and moving stays RELAY`() {

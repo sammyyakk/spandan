@@ -52,6 +52,8 @@ fun SosStatusScreen(
     onFire: (HazardCategory) -> Unit,
     onCancel: () -> Unit,
     onAttachPhrase: (CannedPhrase) -> Unit,
+    hapticsEnabled: Boolean = true,
+    audioEnabled: Boolean = true,
 ) {
     var showingCategoryPicker by remember { mutableStateOf(false) }
     var showingCancelConfirm by remember { mutableStateOf(false) }
@@ -59,6 +61,8 @@ fun SosStatusScreen(
 
     val context = LocalContext.current
     val feedback = remember { Feedback(context) }
+    feedback.hapticsEnabled = hapticsEnabled
+    feedback.audioEnabled = audioEnabled
     LaunchedEffect(state.status) {
         if (state.status != SosStatus.IDLE) feedback.onStatusChanged(state.status)
     }

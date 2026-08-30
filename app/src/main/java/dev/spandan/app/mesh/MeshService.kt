@@ -152,6 +152,14 @@ class MeshService : Service() {
         meshNode.severityConfig = if (enabled) SeverityConfig.WEIGHTED else SeverityConfig.NAIVE_FLOODING
     }
 
+    /** Dims UI, kills animation (handled by the screen layer), and drops this node to beacon-only regardless of battery/motion. */
+    fun setLowPowerMode(enabled: Boolean) {
+        meshNode.forcedRole = if (enabled) dev.spandan.mesh.Role.DEEP_BEACON else null
+    }
+
+    /** Battery bucket is 0..7 (~12.5% each); auto-suggest (never force) low-power below bucket 2 (~25%). */
+    fun shouldSuggestLowPower(): Boolean = readBatteryBucket() <= 2
+
     /** Every nearby node heard recently — automatic the moment both sides are running. */
     fun nearbyDevices() = meshNode.nearbyDevices()
 

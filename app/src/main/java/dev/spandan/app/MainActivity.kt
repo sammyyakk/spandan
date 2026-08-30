@@ -41,6 +41,8 @@ import dev.spandan.app.mesh.MeshService
 import dev.spandan.app.mesh.MeshSnapshot
 import dev.spandan.app.ui.RealMeshRepository
 import dev.spandan.app.ui.screens.MessagesScreen
+import dev.spandan.app.ui.screens.ResponderScreen
+import dev.spandan.app.ui.screens.SettingsScreen
 import dev.spandan.app.ui.screens.SosStatusScreen
 import dev.spandan.mesh.DropReason
 import dev.spandan.mesh.HazardCategory
@@ -57,6 +59,7 @@ class MainActivity : ComponentActivity() {
     private val repository = RealMeshRepository()
     private val cardStore by lazy { dev.spandan.app.ui.PersonalCardStore(this) }
     private val onboardingStore by lazy { dev.spandan.app.ui.OnboardingStore(this) }
+    private val settingsStore by lazy { dev.spandan.app.ui.SettingsStore(this) }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -80,6 +83,7 @@ class MainActivity : ComponentActivity() {
                         repository = repository,
                         cardStore = cardStore,
                         onboardingStore = onboardingStore,
+                        settingsStore = settingsStore,
                         onStart = { startMesh() },
                         onStop = { stopMesh() },
                     )
@@ -130,13 +134,16 @@ private fun AppRoot(
     repository: RealMeshRepository,
     cardStore: dev.spandan.app.ui.PersonalCardStore,
     onboardingStore: dev.spandan.app.ui.OnboardingStore,
+    settingsStore: dev.spandan.app.ui.SettingsStore,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
     var showDevPanel by remember { mutableStateOf(false) }
     var showMessages by remember { mutableStateOf(false) }
     var showCard by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     var card by remember { mutableStateOf(cardStore.load()) }
+    var settings by remember { mutableStateOf(settingsStore.load()) }
     var started by remember { mutableStateOf(false) }
     // First launch only; skip or finish both land on the fully-functional SOS
     // screen. No permission is requested until this resolves, since the
@@ -200,12 +207,40 @@ private fun AppRoot(
                     onBack = { showCard = false },
                 )
             }
+            showSettings -> {
+                SettingsScreen(
+                    settings = settings,
+                    lowPowerSuggested = service?.shouldSuggestLowPower() ?: false,
+                    onChange = { updated ->
+                        settings = updated
+                        settingsStore.save(updated)
+                        repository.setLowPowerMode(updated.lowPowerMode)
+                        if (updated.responderMode) repository.setGateway(true)
+                    },
+                    onOpenDevPanel = { showDevPanel = true; showSettings = false },
+                    onBack = { showSettings = false },
+                )
+            }
+            settings.responderMode -> {
+                val signals by repository.receivedSignals.collectAsState()
+                ResponderScreen(signals = signals)
+                Text(
+                    "Settings",
+                    modifier = Modifier
+                        .align(androidx.compose.ui.Alignment.TopEnd)
+                        .padding(8.dp)
+                        .clickable { showSettings = true },
+                    color = androidx.compose.ui.graphics.Color.Gray,
+                )
+            }
             else -> {
                 SosStatusScreen(
                     state = uiState,
                     onFire = { category -> repository.fireSos(category) },
                     onCancel = { repository.cancelSos() },
                     onAttachPhrase = { phrase -> repository.attachPhrase(phrase) },
+                    hapticsEnabled = settings.hapticsEnabled,
+                    audioEnabled = settings.audioEnabled,
                 )
                 Text(
                     if (unreadCount > 0) "Messages ($unreadCount)" else "Messages",
@@ -224,11 +259,11 @@ private fun AppRoot(
                     color = androidx.compose.ui.graphics.Color.Gray,
                 )
                 Text(
-                    "dev",
+                    "Settings",
                     modifier = Modifier
                         .align(androidx.compose.ui.Alignment.TopEnd)
                         .padding(8.dp)
-                        .clickable { showDevPanel = true },
+                        .clickable { showSettings = true },
                     color = androidx.compose.ui.graphics.Color.Gray,
                 )
             }

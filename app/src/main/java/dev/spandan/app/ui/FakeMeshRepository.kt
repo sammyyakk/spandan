@@ -50,6 +50,7 @@ class FakeMeshRepository(initial: SosUiState = SosUiState()) : MeshRepository {
     }
 
     override fun setGateway(enabled: Boolean) = Unit
+    override fun setLowPowerMode(enabled: Boolean) = Unit
     override fun setWeightedPropagation(enabled: Boolean) = Unit
 
     override fun sendCommandMessage(message: CommandMessage) = Unit

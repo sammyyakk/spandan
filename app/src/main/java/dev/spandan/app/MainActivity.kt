@@ -164,6 +164,17 @@ private fun AppRoot(
         if (onboardingDone && !started) permissionLauncher.launch(Permissions.required())
     }
 
+    // Responder mode implies gateway: a responder-mode device is the thing
+    // that's supposed to acknowledge incoming SOS signals, so it wouldn't
+    // make sense for it to also need a separate manual gateway toggle. This
+    // has to re-sync whenever the service becomes available too, not just on
+    // the Settings toggle interaction -- otherwise a fresh launch with
+    // responder mode already saved on from a previous session starts with
+    // gateway=false until the user happens to flip the toggle again.
+    LaunchedEffect(service, settings.responderMode) {
+        if (service != null) repository.setGateway(settings.responderMode)
+    }
+
     val uiState by repository.uiState.collectAsState()
     val messages by repository.messages.collectAsState()
     val unreadCount = messages.count { !it.read }
@@ -217,7 +228,8 @@ private fun AppRoot(
                         settings = updated
                         settingsStore.save(updated)
                         repository.setLowPowerMode(updated.lowPowerMode)
-                        if (updated.responderMode) repository.setGateway(true)
+                        // Gateway sync (both on and off) is handled uniformly by the
+                        // LaunchedEffect(service, settings.responderMode) above.
                     },
                     onToggleDashboard = { enable ->
                         val s = service

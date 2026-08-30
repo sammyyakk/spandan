@@ -81,6 +81,52 @@ class RealMeshRepository : MeshRepository {
     private val _receivedSignals = MutableStateFlow<List<dev.spandan.app.ui.screens.ReceivedSignal>>(emptyList())
     val receivedSignals: StateFlow<List<dev.spandan.app.ui.screens.ReceivedSignal>> = _receivedSignals.asStateFlow()
 
+    /**
+     * Dev-panel-only: injects [count] synthetic signals straight into the
+     * Responder view, bypassing BLE entirely -- for demoing/testing triage
+     * sorting and the Responder screen at a scale five real phones can't
+     * reach. A fraction are marked as a fast-worsening trend (two quick
+     * RiskTrendTracker samples with a large barometric delta) so the "trend
+     * outranks static severity" sort order actually has something to show.
+     */
+    fun simulateIncomingSignals(count: Int) {
+        val random = kotlin.random.Random.Default
+        val generated = (1..count).map {
+            val originId = random.nextInt(0, 0x10000)
+            val hazard = HazardCategory.entries.random(random)
+            val severity = random.nextInt(0, 8)
+            val makeWorsening = random.nextInt(0, 4) == 0 // ~25% of simulated signals
+            val baroValid = random.nextBoolean()
+            if (baroValid) {
+                riskTrendTracker.record(originId, true, random.nextInt(-20, 20))
+                if (makeWorsening) riskTrendTracker.record(originId, true, 60) // sharp rise in pressure -> falling fast
+            }
+            val hasFix = random.nextBoolean()
+            val packet = dev.spandan.mesh.SpandanPacket(
+                msgType = MsgType.SOS,
+                protocolVersion = 0,
+                hazardCategory = hazard,
+                severity = severity,
+                originId = originId,
+                msgId = random.nextInt(0, 0x10000),
+                location = if (hasFix) {
+                    dev.spandan.mesh.QuantizedLocation.fromDegrees(random.nextDouble(-90.0, 90.0), random.nextDouble(-180.0, 180.0))
+                } else {
+                    dev.spandan.mesh.QuantizedLocation.noFix()
+                },
+                baroValid = baroValid,
+                baroDeltaDeciHpa = if (baroValid) random.nextInt(-20, 20) else 0,
+                batteryBucket = random.nextInt(0, 8),
+                livenessBucket = random.nextInt(0, 8),
+                originTs = 0,
+                hopCount = random.nextInt(0, 6),
+            )
+            dev.spandan.app.ui.screens.ReceivedSignal(packet, System.currentTimeMillis(), acknowledged = random.nextInt(0, 3) == 0)
+        }
+        _receivedSignals.value = _receivedSignals.value + generated
+        appendLog("Simulated $count incoming signals")
+    }
+
     // The service (not this repository) is the source of truth for whether an
     // SOS is active -- this repository is recreated whenever MainActivity is
     // (rotation, process death, a fresh screenshot/debug cycle), but the

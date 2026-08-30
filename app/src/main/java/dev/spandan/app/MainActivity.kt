@@ -177,7 +177,7 @@ private fun AppRoot(
                 })
             }
             showDevPanel -> {
-                SpandanScreen(service = service, onStart = onStart, onStop = onStop)
+                SpandanScreen(service = service, repository = repository, onStart = onStart, onStop = onStop)
                 Text(
                     "< back",
                     modifier = Modifier
@@ -287,7 +287,7 @@ private fun AppRoot(
 }
 
 @Composable
-private fun SpandanScreen(service: MeshService?, onStart: () -> Unit, onStop: () -> Unit) {
+private fun SpandanScreen(service: MeshService?, repository: RealMeshRepository, onStart: () -> Unit, onStop: () -> Unit) {
     var running by remember { mutableStateOf(false) }
     var permissionMessage by remember { mutableStateOf("") }
     var snapshot by remember { mutableStateOf<MeshSnapshot?>(null) }
@@ -398,6 +398,13 @@ private fun SpandanScreen(service: MeshService?, onStart: () -> Unit, onStop: ()
                     runCatching { service?.sendCommandMessage(m) }
                 }) { Text(m.name.replace('_', ' ').take(16) + "  ") }
             }
+        }
+
+        Text("simulate load (Responder screen triage demo, bypasses BLE entirely):")
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(onClick = { repository.simulateIncomingSignals(10) }) { Text("+10 signals") }
+            Button(onClick = { repository.simulateIncomingSignals(50) }) { Text("+50 signals") }
+            Button(onClick = { repository.simulateIncomingSignals(200) }) { Text("+200 signals") }
         }
 
         Text("log:", style = MaterialTheme.typography.titleSmall)

@@ -174,6 +174,29 @@ class MeshNodeAckPathTest {
     }
 
     @Test
+    fun `updateActivePhrase changes content of subsequent resends without changing msgId`() {
+        val h = Harness(symmetric(0 to 1))
+        val a = h.node(0, originId = 0xA000)
+        h.node(1, originId = 0xB000)
+
+        val msgId = a.originateSos(HazardCategory.MEDICAL, 6, QuantizedLocation.noFix(), false, 0, 3, 0)
+        a.updateActivePhrase(msgId, CannedPhrase.NEED_MEDICAL_EVAC)
+        h.advance(30_000)
+
+        val sends = h.events[0]!!.filterIsInstance<MeshEvent.Sent>().filter { it.packet.msgType == MsgType.SOS }
+        assertTrue(sends.isNotEmpty())
+        assertTrue(sends.all { it.packet.msgId == msgId }, "msgId must not change when phrase updates")
+        assertTrue(sends.any { it.packet.phrase == CannedPhrase.NEED_MEDICAL_EVAC }, "later resends should carry the updated phrase")
+    }
+
+    @Test
+    fun `updateActivePhrase on an unknown or already-acked msgId is a no-op`() {
+        val h = Harness(symmetric(0 to 1))
+        val a = h.node(0, originId = 0xA000)
+        a.updateActivePhrase(0x9999, CannedPhrase.PLEASE_HURRY) // never originated; must not throw
+    }
+
+    @Test
     fun `ack and its originating SOS do not collide on dedup key`() {
         val sos = testSos()
         val ack = sos.copy(msgType = MsgType.ACK, hopCount = 0)

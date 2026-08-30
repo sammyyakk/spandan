@@ -30,6 +30,7 @@ class MeshNode(
     private val neighbours = NeighbourTracker(clock)
     private val pendingAcks = HashSet<Int>() // msgIds of our own SOS packets awaiting ack
     private val ackedMsgIds = HashSet<Int>()
+    private val activeSosPackets = HashMap<Int, SpandanPacket>() // msgId -> current (mutable-by-phrase) content
     private var lastKnownBatteryBucket = 7
 
     init {
@@ -98,6 +99,7 @@ class MeshNode(
         baroDeltaDeciHpa: Int,
         batteryBucket: Int,
         livenessBucket: Int,
+        phrase: CannedPhrase = CannedPhrase.NONE,
     ): Int {
         val msgId = random.nextInt(0, 0x10000)
         val packet = SpandanPacket(
@@ -114,10 +116,29 @@ class MeshNode(
             livenessBucket = livenessBucket,
             originTs = (clock.nowMillis() / 1000 % 256).toInt(),
             hopCount = 0,
+            phrase = phrase,
         )
         pendingAcks += msgId
+        activeSosPackets[msgId] = packet
         originate(packet)
         return msgId
+    }
+
+    /**
+     * Updates the phrase on an SOS we originated that's still actively
+     * repeating (not yet acknowledged). Takes effect on the *next* scheduled
+     * resend — msgId/dedupKey are unchanged, so this is not a new SOS.
+     *
+     * Known limitation, inherent to flood dedup rather than a bug: a neighbour
+     * that already relayed the original packet will drop this later resend as
+     * a duplicate (dedupKey doesn't include phrase, by design — phrase isn't
+     * part of packet identity). So an attached phrase only reaches neighbours
+     * encountered *after* the update, not nodes that already relayed the
+     * pre-update version. No-op if [msgId] isn't an active SOS of ours.
+     */
+    fun updateActivePhrase(msgId: Int, phrase: CannedPhrase) {
+        val current = activeSosPackets[msgId] ?: return
+        activeSosPackets[msgId] = current.copy(phrase = phrase)
     }
 
     /**
@@ -143,9 +164,14 @@ class MeshNode(
     private fun scheduleUntilAcked(packet: SpandanPacket) {
         val delay = jitteredDelay(severityConfig.rebroadcastIntervalMs(packet.severity))
         scheduler.schedule(delay) {
-            if (isAcknowledged(packet.msgId)) return@schedule
-            sendNow(packet)
-            scheduleUntilAcked(packet)
+            if (isAcknowledged(packet.msgId)) {
+                activeSosPackets.remove(packet.msgId)
+                return@schedule
+            }
+            // Re-read from activeSosPackets each time so updateActivePhrase() takes effect.
+            val current = activeSosPackets[packet.msgId] ?: packet
+            sendNow(current)
+            scheduleUntilAcked(current)
         }
     }
 
@@ -188,6 +214,7 @@ class MeshNode(
         if (packet.msgType == MsgType.ACK && packet.originId == originId) {
             if (packet.msgId in pendingAcks && packet.msgId !in ackedMsgIds) {
                 ackedMsgIds += packet.msgId
+                activeSosPackets.remove(packet.msgId)
                 onEvent(MeshEvent.Acknowledged(packet.msgId))
             }
         }

@@ -90,10 +90,26 @@ metadata — without touching the fragment-1 layout).
 | `liveness_bucket` | 3 | time-since-last-motion, exponential buckets (e.g. <1min, <5min, <15min, <1h, <4h, <12h, <24h, >24h) — coarse is fine, this only gates relay-vs-beacon role |
 | `origin_ts` | 8 | seconds-since-origination mod 256 (rolls every 256s / ~4.3min); used for freshness/jitter comparisons, not wall-clock. Full epoch millis doesn't fit and isn't needed — relative recency is all dedup/TTL logic needs |
 | `hop_count` | 4 | 0–15; incremented per relay, compared against severity-weighted hop TTL |
-| reserved | 6 | pad to 128 bits, future use (e.g. gateway-designation flag) |
+| `phrase` | 4 | canned distress phrase (`CannedPhrase` enum, 16 slots incl. NONE) — see below |
+| reserved | 2 | pad to 128 bits, future use |
 
-Total: 2+3+2+3+16+16+1+24+24+1+8+3+3+8+4+6 = **128 bits = 16 bytes**. Byte-aligned,
+Total: 2+3+2+3+16+16+1+24+24+1+8+3+3+8+4+4+2 = **128 bits = 16 bytes**. Byte-aligned,
 leaves 8 bytes of the 24-byte budget unused in v1.
+
+**Why canned phrases instead of audio:** live/recorded audio doesn't fit this
+architecture — even heavily compressed speech (Opus at ~6kbps) needs
+throughput orders of magnitude past what a ~24-byte-every-few-seconds legacy
+advertisement can carry, and a connected GATT link fast enough for audio would
+mean abandoning the broadcast/flood-relay model per link (1:1, no mesh).
+Bluetooth LE Audio's broadcast mode (Auracast) is built for real audio
+broadcast but is one-source-to-many, not multi-hop relayed, and needs
+LE-Audio-capable hardware/OS on every node — doesn't fit a flood-relay mesh
+either. `CannedPhrase` is the practical substitute: a fixed vocabulary (16
+slots) costing 4 bits instead of a live stream — `NEED_WATER`,
+`NEED_MEDICAL_EVAC`, `BLEEDING`, `CANT_MOVE`, `TRAPPED_LIMB`,
+`STRUCTURE_UNSTABLE`, `FIRE_NEARBY`, `SMOKE_PRESENT`, `WATER_RISING`,
+`LOW_OXYGEN`, `WITH_CHILD`, `WITH_ELDERLY`, `HEAR_RESCUERS`, `PLEASE_HURRY`,
+`OTHER_HAZARD`, plus `NONE`.
 
 **`msg_id` collision resistance:** brief calls for "collision-resistant enough for a
 few thousand nodes." A bare 16-bit `msg_id` has a ~1-in-few-thousand birthday
@@ -122,6 +138,18 @@ and `msg_id`, the dedup key **must** include `msg_type` — `dedupKey() =
 (msgType << 32) | (originId << 16) | msgId`. Without `msgType` in the key, every
 node that already cached the SOS would see the ACK's key as an existing duplicate
 and drop it on arrival, and the ack could never propagate back through the mesh.
+
+**`MeshNode.updateActivePhrase(msgId, phrase)`** — lets the UI attach a canned
+phrase to an SOS after it's already firing, without starting a new SOS
+(msgId/dedupKey unchanged). Added for the victim-facing UI layer, which needs
+to fire instantly on category tap and let phrase selection happen
+non-blockingly afterward. **Known limitation, inherent to flood dedup, not a
+bug:** a neighbour that already relayed the pre-update packet will drop the
+phrase-updated resend as a duplicate (dedup key deliberately excludes phrase —
+it's not part of packet identity). So an attached phrase only reaches
+neighbours encountered *after* the update, never nodes that already relayed
+the original. Acceptable for a hackathon demo; a real fix would need a
+separate small "amendment" packet type, not attempted here.
 
 ## Dedup, cache, relay (Stage 3+)
 

@@ -18,6 +18,7 @@ import android.os.Looper
 import dev.spandan.app.ble.AndroidClock
 import dev.spandan.app.ble.AndroidScheduler
 import dev.spandan.app.ble.BleTransport
+import dev.spandan.app.ble.LocationProvider
 import dev.spandan.mesh.CannedPhrase
 import dev.spandan.mesh.HazardCategory
 import dev.spandan.mesh.MeshEvent
@@ -55,6 +56,7 @@ class MeshService : Service() {
 
     private lateinit var transport: BleTransport
     private lateinit var meshNode: MeshNode
+    private lateinit var locationProvider: LocationProvider
     private var sensorManager: SensorManager? = null
     private var significantMotionSensor: Sensor? = null
     private var lastMotionAtMillis: Long = System.currentTimeMillis()
@@ -76,6 +78,7 @@ class MeshService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification("starting"))
 
         transport = BleTransport(this)
+        locationProvider = LocationProvider(this)
         meshNode = MeshNode(
             originId = Random.nextInt(0, 0x10000),
             transport = transport,
@@ -109,7 +112,7 @@ class MeshService : Service() {
         val msgId = meshNode.originateSos(
             hazardCategory = hazard,
             severity = severity,
-            location = QuantizedLocation.noFix(), // Stage 1-7 demo scope: no GPS wiring yet
+            location = locationProvider.currentLocation(),
             baroValid = false,
             baroDeltaDeciHpa = 0,
             batteryBucket = batteryBucket,
@@ -162,6 +165,11 @@ class MeshService : Service() {
 
     /** Every nearby node heard recently — automatic the moment both sides are running. */
     fun nearbyDevices() = meshNode.nearbyDevices()
+
+    fun hasLocationFix(): Boolean = locationProvider.currentLocation().validFix
+
+    /** Manual pin-drop path for when there's no real GPS fix -- never a blocking error. */
+    fun setManualLocation(lat: Double, lon: Double) = locationProvider.setManualLocation(lat, lon)
 
     fun snapshot(): MeshSnapshot = MeshSnapshot(
         originId = meshNode.originId,

@@ -13,7 +13,11 @@
     <!-- which the OS required in order to return BLE scan results. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <!-- Uncapped (no maxSdkVersion): doubles as the pre-12 BLE-scan permission
+         above AND the real GPS fix for the SOS location field on every SDK
+         version. A denied or no-fix state is not an error: gps_valid=0 and a
+         manual pin-drop path handle it, never a blocking error. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <!-- Stage 5: foreground service so advertise/scan survive screen-off + doze. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -22,6 +26,15 @@
 
     <!-- Haptic feedback on state changes, for a user who may not be able to see the screen. -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Wi-Fi Direct: same-room, single-hop bulk transfer for personal card / -->
+    <!-- voicenote / image attachments (see CLAUDE.md); never used for the -->
+    <!-- core mesh, which stays BLE-only. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <application
         android:allowBackup="false"

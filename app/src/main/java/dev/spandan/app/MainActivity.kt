@@ -230,7 +230,7 @@ private fun AppRoot(
                         .align(androidx.compose.ui.Alignment.TopEnd)
                         .padding(8.dp)
                         .clickable { showSettings = true },
-                    color = androidx.compose.ui.graphics.Color.Gray,
+                    color = dev.spandan.app.ui.theme.SpandanColors.ResponderAccent,
                 )
             }
             else -> {

@@ -58,18 +58,6 @@ fun PersonalCardScreen(card: PersonalCard, onSave: (PersonalCard) -> Unit, onBac
     var sendStatus by remember { mutableStateOf("") }
     var receivedInfo by remember { mutableStateOf("") }
 
-    // Opportunistic receive: whichever side of a Wi-Fi Direct negotiation
-    // ends up as group owner needs a listener already running for the other
-    // side's connect to succeed, and role election isn't ours to control --
-    // so both phones listen while this screen is open, not just the one
-    // that's "supposed to" receive.
-    DisposableEffect(Unit) {
-        transport.startReceiving { payload ->
-            receivedInfo = "Received ${payload.size} bytes from a nearby device"
-        }
-        onDispose { transport.stopReceiving() }
-    }
-
     fun currentCard() = PersonalCard(
         bloodGroup = bloodGroup,
         allergiesOrMedicalNeeds = allergies,
@@ -81,6 +69,19 @@ fun PersonalCardScreen(card: PersonalCard, onSave: (PersonalCard) -> Unit, onBac
 
     fun save() {
         onSave(currentCard())
+    }
+
+    // Opportunistic receive: whichever side of a Wi-Fi Direct negotiation
+    // ends up as group owner needs a listener already running for the other
+    // side's connect to succeed, and role election isn't ours to control --
+    // so both phones listen while this screen is open, not just the one
+    // that's "supposed to" receive. Symmetric exchange: whatever comes in,
+    // this device replies with its own current card in the same round trip.
+    DisposableEffect(Unit) {
+        transport.startReceiving(replyProvider = { currentCard().encode() }) { payload ->
+            receivedInfo = "Received ${payload.size} bytes from a nearby device"
+        }
+        onDispose { transport.stopReceiving() }
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize().background(SpandanColors.Surface).padding(SpandanSpacing.md)) {
@@ -136,9 +137,11 @@ fun PersonalCardScreen(card: PersonalCard, onSave: (PersonalCard) -> Unit, onBac
                     .clickable {
                         val payload = currentCard().encode() + (voiceNoteFile?.readBytes() ?: ByteArray(0))
                         sendStatus = "Looking for a nearby device…"
-                        transport.discoverAndSend(payload) { success, message ->
-                            sendStatus = if (success) "Sent" else "Couldn't send: $message"
-                        }
+                        transport.discoverAndSend(
+                            payload = payload,
+                            onResult = { success, message -> sendStatus = if (success) "Sent" else "Couldn't send: $message" },
+                            onReply = { reply -> receivedInfo = "Received ${reply.size} bytes back from the same exchange" },
+                        )
                     },
             )
             if (sendStatus.isNotEmpty()) {

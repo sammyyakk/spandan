@@ -17,21 +17,37 @@ private const val PORT = 8988
  * Same-room, single-hop bulk payload delivery (personal card, voicenotes,
  * images) -- deliberately not part of the BLE flood-relay mesh (see
  * CLAUDE.md: multi-hop bulk transfer over Wi-Fi Direct is a much bigger
- * problem than BLE broadcast and isn't attempted here). Connects to the
- * first discovered peer and pushes one length-prefixed byte payload.
+ * problem than BLE broadcast and isn't attempted here).
+ *
+ * Bidirectional as a single symmetric exchange, not a persistent duplex
+ * channel: whichever side connects out writes its payload, then reads a
+ * reply on the *same* socket before closing; whichever side is listening
+ * reads the incoming payload, then writes its own reply back before
+ * closing. One round trip per connection, not a live back-and-forth session
+ * -- e.g. a victim's card triggers an automatic reply in the same exchange,
+ * rather than a second separate connect attempt in the other direction.
  *
  * Unverified on real hardware in this session: Wi-Fi Direct group
  * negotiation is finicky even under good conditions, and two-device manual
- * verification of it wasn't reached in the time available. Built correctly
- * against the documented API, but flag this honestly rather than claim
- * confidence the session didn't earn.
+ * verification of the original one-way version was reached, but this
+ * symmetric-exchange revision was not re-verified before this commit. Built
+ * correctly against the documented API; flag this honestly rather than
+ * claim confidence the session didn't earn.
  */
 class WifiDirectTransport(context: Context) {
     private val manager = context.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
     private val channel = manager?.initialize(context, context.mainLooper, null)
 
+    /**
+     * @param onReply called with whatever the peer sent back in the same
+     *   exchange; a zero-length array if the peer had nothing to reply with.
+     */
     @SuppressLint("MissingPermission")
-    fun discoverAndSend(payload: ByteArray, onResult: (success: Boolean, message: String) -> Unit) {
+    fun discoverAndSend(
+        payload: ByteArray,
+        onResult: (success: Boolean, message: String) -> Unit,
+        onReply: (ByteArray) -> Unit = {},
+    ) {
         val mgr = manager
         val ch = channel
         if (mgr == null || ch == null) {
@@ -47,7 +63,7 @@ class WifiDirectTransport(context: Context) {
                         onResult(false, "no nearby Wi-Fi Direct peer found")
                         return@requestPeers
                     }
-                    connectAndSend(mgr, ch, target, payload, onResult)
+                    connectAndExchange(mgr, ch, target, payload, onResult, onReply)
                 }
             }
 
@@ -58,12 +74,13 @@ class WifiDirectTransport(context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectAndSend(
+    private fun connectAndExchange(
         mgr: WifiP2pManager,
         ch: WifiP2pManager.Channel,
         device: WifiP2pDevice,
         payload: ByteArray,
         onResult: (Boolean, String) -> Unit,
+        onReply: (ByteArray) -> Unit,
     ) {
         val config = android.net.wifi.p2p.WifiP2pConfig().apply { deviceAddress = device.deviceAddress }
         mgr.connect(ch, config, object : WifiP2pManager.ActionListener {
@@ -95,15 +112,20 @@ class WifiDirectTransport(context: Context) {
                         runCatching {
                             val socket = Socket()
                             socket.connect(java.net.InetSocketAddress(ownerAddress, PORT), 8_000)
-                            DataOutputStream(socket.getOutputStream()).use { out ->
-                                out.writeInt(payload.size)
-                                out.write(payload)
-                            }
+                            val out = DataOutputStream(socket.getOutputStream())
+                            val input = DataInputStream(socket.getInputStream())
+                            out.writeInt(payload.size)
+                            out.write(payload)
+                            out.flush()
+                            val replySize = input.readInt()
+                            val reply = ByteArray(replySize)
+                            if (replySize > 0) input.readFully(reply)
                             socket.close()
-                            onResult(true, "sent ${payload.size} bytes")
+                            if (replySize > 0) onReply(reply)
+                            onResult(true, "sent ${payload.size} bytes" + if (replySize > 0) ", received ${replySize} bytes back" else "")
                         }.onFailure { e ->
-                            Log.w(TAG, "send failed", e)
-                            onResult(false, "send failed: ${e.message}")
+                            Log.w(TAG, "exchange failed", e)
+                            onResult(false, "exchange failed: ${e.message}")
                         }
                     }.start()
                 }
@@ -115,8 +137,14 @@ class WifiDirectTransport(context: Context) {
         })
     }
 
-    /** Group-owner-side receiver: call once, keeps listening until [stopReceiving]. */
-    fun startReceiving(onPayload: (ByteArray) -> Unit) {
+    /**
+     * Group-owner-side listener: call once, keeps listening until
+     * [stopReceiving]. [replyProvider] is invoked after each payload is
+     * fully received, and its return value is written back on the same
+     * socket before closing -- return a zero-length array if there's
+     * nothing to reply with.
+     */
+    fun startReceiving(replyProvider: () -> ByteArray = { ByteArray(0) }, onPayload: (ByteArray) -> Unit) {
         val server = runCatching { ServerSocket(PORT) }.getOrElse {
             Log.w(TAG, "could not open receive socket", it)
             return
@@ -125,20 +153,24 @@ class WifiDirectTransport(context: Context) {
         Thread {
             while (!server.isClosed) {
                 val client = runCatching { server.accept() }.getOrNull() ?: break
-                handleClient(client, onPayload)
+                handleClient(client, replyProvider, onPayload)
             }
         }.start()
     }
 
-    private fun handleClient(client: Socket, onPayload: (ByteArray) -> Unit) {
+    private fun handleClient(client: Socket, replyProvider: () -> ByteArray, onPayload: (ByteArray) -> Unit) {
         runCatching {
-            DataInputStream(client.getInputStream()).use { input ->
-                val size = input.readInt()
-                val buf = ByteArray(size)
-                input.readFully(buf)
-                onPayload(buf)
-            }
-        }.onFailure { Log.w(TAG, "receive failed", it) }
+            val input = DataInputStream(client.getInputStream())
+            val out = DataOutputStream(client.getOutputStream())
+            val size = input.readInt()
+            val buf = ByteArray(size)
+            input.readFully(buf)
+            onPayload(buf)
+            val reply = replyProvider()
+            out.writeInt(reply.size)
+            if (reply.isNotEmpty()) out.write(reply)
+            out.flush()
+        }.onFailure { Log.w(TAG, "receive/reply failed", it) }
         runCatching { client.close() }
     }
 

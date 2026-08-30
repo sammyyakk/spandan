@@ -19,6 +19,36 @@ enum class HazardCategory(val bits: Int) {
     }
 }
 
+/**
+ * Canned distress phrases — audio doesn't fit in a 24-byte legacy BLE
+ * advertisement (nowhere close to the throughput even compressed speech
+ * needs), so this is the practical substitute: a fixed vocabulary the victim
+ * picks from, costing 4 bits instead of a live audio stream. 16 slots, one
+ * reserved as "none selected".
+ */
+enum class CannedPhrase(val bits: Int) {
+    NONE(0),
+    NEED_WATER(1),
+    NEED_MEDICAL_EVAC(2),
+    BLEEDING(3),
+    CANT_MOVE(4),
+    TRAPPED_LIMB(5),
+    STRUCTURE_UNSTABLE(6),
+    FIRE_NEARBY(7),
+    SMOKE_PRESENT(8),
+    WATER_RISING(9),
+    LOW_OXYGEN(10),
+    WITH_CHILD(11),
+    WITH_ELDERLY(12),
+    HEAR_RESCUERS(13),
+    PLEASE_HURRY(14),
+    OTHER_HAZARD(15);
+
+    companion object {
+        fun fromBits(bits: Long): CannedPhrase = entries.first { it.bits.toLong() == bits }
+    }
+}
+
 /** Quantized, privacy-conscious GPS fix. [validFix] false means lat/lon are meaningless. */
 data class QuantizedLocation(val validFix: Boolean, val latQ: Int, val lonQ: Int) {
     companion object {
@@ -67,6 +97,7 @@ data class SpandanPacket(
     val livenessBucket: Int,
     val originTs: Int,
     val hopCount: Int,
+    val phrase: CannedPhrase = CannedPhrase.NONE,
 ) {
     init {
         require(protocolVersion in 0..7) { "protocolVersion out of 3-bit range: $protocolVersion" }
@@ -106,7 +137,8 @@ data class SpandanPacket(
         w.writeBits(livenessBucket.toLong(), 3)
         w.writeBits(originTs.toLong(), 8)
         w.writeBits(hopCount.toLong(), 4)
-        w.writeBits(0L, 6) // reserved
+        w.writeBits(phrase.bits.toLong(), 4)
+        w.writeBits(0L, 2) // reserved
         return w.bytes
     }
 
@@ -131,7 +163,8 @@ data class SpandanPacket(
             val livenessBucket = r.readBits(3).toInt()
             val originTs = r.readBits(8).toInt()
             val hopCount = r.readBits(4).toInt()
-            r.readBits(6) // reserved, discarded
+            val phrase = CannedPhrase.fromBits(r.readBits(4))
+            r.readBits(2) // reserved, discarded
 
             return SpandanPacket(
                 msgType = msgType,
@@ -147,6 +180,7 @@ data class SpandanPacket(
                 livenessBucket = livenessBucket,
                 originTs = originTs,
                 hopCount = hopCount,
+                phrase = phrase,
             )
         }
     }

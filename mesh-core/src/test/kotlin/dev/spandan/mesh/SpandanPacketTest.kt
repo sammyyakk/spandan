@@ -22,10 +22,11 @@ class SpandanPacketTest {
         livenessBucket: Int = 2,
         originTs: Int = 200,
         hopCount: Int = 5,
+        phrase: CannedPhrase = CannedPhrase.NONE,
     ) = SpandanPacket(
         msgType, protocolVersion, hazardCategory, severity, originId, msgId,
         location, baroValid, baroDeltaDeciHpa, batteryBucket, livenessBucket,
-        originTs, hopCount,
+        originTs, hopCount, phrase,
     )
 
     @Test
@@ -47,6 +48,14 @@ class SpandanPacketTest {
                 val p = samplePacket(msgType = msgType, hazardCategory = hazard)
                 assertEquals(p, SpandanPacket.decode(p.encode()), "failed for $msgType/$hazard")
             }
+        }
+    }
+
+    @Test
+    fun `round trips every canned phrase`() {
+        for (phrase in CannedPhrase.entries) {
+            val p = samplePacket(phrase = phrase)
+            assertEquals(p, SpandanPacket.decode(p.encode()), "failed for $phrase")
         }
     }
 
@@ -96,6 +105,7 @@ class SpandanPacketTest {
                 livenessBucket = random.nextInt(0, 8),
                 originTs = random.nextInt(0, 256),
                 hopCount = random.nextInt(0, 16),
+                phrase = CannedPhrase.entries.random(random),
             )
             assertEquals(p, SpandanPacket.decode(p.encode()), "failed for $p")
         }

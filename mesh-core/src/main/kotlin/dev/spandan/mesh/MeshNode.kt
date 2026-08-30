@@ -31,6 +31,7 @@ class MeshNode(
     private val pendingAcks = HashSet<Int>() // msgIds of our own SOS packets awaiting ack
     private val ackedMsgIds = HashSet<Int>()
     private val activeSosPackets = HashMap<Int, SpandanPacket>() // msgId -> current (mutable-by-phrase) content
+    private val cancelledSosMsgIds = HashSet<Int>()
     private var lastKnownBatteryBucket = 7
 
     init {
@@ -142,6 +143,18 @@ class MeshNode(
     }
 
     /**
+     * "I'm safe now": stops resending this SOS locally. Cannot recall copies
+     * already relayed elsewhere in the mesh — that's inherent to a flood
+     * broadcast (no central authority to tell "undo that"), not a bug. A
+     * cancelled msgId also can't later be "acknowledged" into resuming.
+     */
+    fun cancelSos(msgId: Int) {
+        cancelledSosMsgIds += msgId
+        activeSosPackets.remove(msgId)
+        pendingAcks.remove(msgId)
+    }
+
+    /**
      * Sends [packet] now and keeps it alive afterward:
      *  - an SOS re-sends indefinitely, on jittered severity-weighted intervals,
      *    until acknowledged — "broadcasting" is meant to persist until someone
@@ -164,12 +177,13 @@ class MeshNode(
     private fun scheduleUntilAcked(packet: SpandanPacket) {
         val delay = jitteredDelay(severityConfig.rebroadcastIntervalMs(packet.severity))
         scheduler.schedule(delay) {
-            if (isAcknowledged(packet.msgId)) {
+            if (isAcknowledged(packet.msgId) || packet.msgId in cancelledSosMsgIds) {
                 activeSosPackets.remove(packet.msgId)
                 return@schedule
             }
-            // Re-read from activeSosPackets each time so updateActivePhrase() takes effect.
-            val current = activeSosPackets[packet.msgId] ?: packet
+            // Re-read from activeSosPackets each time so updateActivePhrase() takes effect;
+            // absence here (shouldn't normally happen outside ack/cancel) just stops the chain.
+            val current = activeSosPackets[packet.msgId] ?: return@schedule
             sendNow(current)
             scheduleUntilAcked(current)
         }

@@ -18,6 +18,7 @@ import android.os.Looper
 import dev.spandan.app.ble.AndroidClock
 import dev.spandan.app.ble.AndroidScheduler
 import dev.spandan.app.ble.BleTransport
+import dev.spandan.mesh.CannedPhrase
 import dev.spandan.mesh.HazardCategory
 import dev.spandan.mesh.MeshEvent
 import dev.spandan.mesh.MeshNode
@@ -36,6 +37,9 @@ data class MeshSnapshot(
     val weightedPropagation: Boolean,
     val pendingSosMsgId: Int?,
     val acknowledged: Boolean,
+    val activeCategory: HazardCategory?,
+    val activePhrase: CannedPhrase,
+    val sentAtMillis: Long?,
 )
 
 /**
@@ -55,6 +59,9 @@ class MeshService : Service() {
     private var significantMotionSensor: Sensor? = null
     private var lastMotionAtMillis: Long = System.currentTimeMillis()
     private var lastPendingSosMsgId: Int? = null
+    private var lastPendingCategory: HazardCategory? = null
+    private var lastPendingPhrase: CannedPhrase = CannedPhrase.NONE
+    private var lastSentAtMillis: Long? = null
 
     var listener: ((MeshEvent) -> Unit)? = null
 
@@ -97,7 +104,7 @@ class MeshService : Service() {
 
     // --- public API for the bound Activity -------------------------------------------------
 
-    fun sendSos(hazard: HazardCategory, severity: Int): Int {
+    fun sendSos(hazard: HazardCategory, severity: Int, phrase: CannedPhrase = CannedPhrase.NONE): Int {
         val batteryBucket = readBatteryBucket()
         val msgId = meshNode.originateSos(
             hazardCategory = hazard,
@@ -107,10 +114,29 @@ class MeshService : Service() {
             baroDeltaDeciHpa = 0,
             batteryBucket = batteryBucket,
             livenessBucket = livenessBucket(),
+            phrase = phrase,
         )
         lastPendingSosMsgId = msgId
+        lastPendingCategory = hazard
+        lastPendingPhrase = phrase
+        lastSentAtMillis = System.currentTimeMillis()
         updateNotification("broadcasting")
         return msgId
+    }
+
+    fun attachPhrase(msgId: Int, phrase: CannedPhrase) {
+        meshNode.updateActivePhrase(msgId, phrase)
+        if (msgId == lastPendingSosMsgId) lastPendingPhrase = phrase
+    }
+
+    fun cancelSos() {
+        val msgId = lastPendingSosMsgId ?: return
+        meshNode.cancelSos(msgId)
+        lastPendingSosMsgId = null
+        lastPendingCategory = null
+        lastPendingPhrase = CannedPhrase.NONE
+        lastSentAtMillis = null
+        updateNotification("idle")
     }
 
     fun setGateway(enabled: Boolean) {
@@ -133,6 +159,9 @@ class MeshService : Service() {
         weightedPropagation = meshNode.severityConfig === SeverityConfig.WEIGHTED,
         pendingSosMsgId = lastPendingSosMsgId,
         acknowledged = lastPendingSosMsgId?.let { meshNode.isAcknowledged(it) } ?: false,
+        activeCategory = lastPendingCategory,
+        activePhrase = lastPendingPhrase,
+        sentAtMillis = lastSentAtMillis,
     )
 
     // --- battery / motion sampling for role election ----------------------------------------

@@ -197,6 +197,22 @@ class MeshNodeAckPathTest {
     }
 
     @Test
+    fun `cancelSos stops further resends immediately`() {
+        val h = Harness(symmetric(0 to 1))
+        val a = h.node(0, originId = 0xA000)
+        h.node(1, originId = 0xB000)
+
+        val msgId = a.originateSos(HazardCategory.TRAPPED, 5, QuantizedLocation.noFix(), false, 0, 7, 0)
+        h.advance(5_000)
+        a.cancelSos(msgId)
+
+        val sendsAtCancel = h.countOf(0) { it is MeshEvent.Sent && it.packet.msgType == MsgType.SOS }
+        h.advance(120_000)
+        val sendsLater = h.countOf(0) { it is MeshEvent.Sent && it.packet.msgType == MsgType.SOS }
+        assertEquals(sendsAtCancel, sendsLater, "cancelled SOS must not keep resending")
+    }
+
+    @Test
     fun `ack and its originating SOS do not collide on dedup key`() {
         val sos = testSos()
         val ack = sos.copy(msgType = MsgType.ACK, hopCount = 0)

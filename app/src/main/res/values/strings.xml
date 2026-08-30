@@ -1,3 +1,40 @@
 <resources>
     <string name="app_name">Spandan</string>
+
+    <!-- SOS screen -->
+    <string name="sos_button">SOS</string>
+    <string name="sos_button_description">Send distress signal</string>
+    <string name="sos_pick_category">What is happening?</string>
+    <string name="category_trapped">Trapped</string>
+    <string name="category_water_rising">Water rising</string>
+    <string name="category_injured">Injured</string>
+    <string name="category_other">Other</string>
+    <string name="sos_cancel_prompt">Back</string>
+
+    <!-- Status screen -->
+    <string name="status_sending_title">Sending your signal</string>
+    <string name="status_sending_body">Broadcasting to nearby devices…</string>
+    <string name="status_relayed_title">Signal is moving</string>
+    <string name="status_relayed_body">A nearby device picked up your signal and is passing it on.</string>
+    <string name="status_acknowledged_title">Help is coming</string>
+    <string name="status_acknowledged_body">Your signal reached rescue command.</string>
+    <string name="status_stale_title">Still broadcasting</string>
+    <string name="status_stale_body">Hasn\'t been relayed onward yet. Your signal keeps trying.</string>
+    <string name="status_neighbour_count">%1$d nearby devices are helping relay</string>
+    <string name="status_neighbour_count_zero">No devices nearby yet</string>
+    <string name="status_time_just_now">Sent just now</string>
+    <string name="status_time_minutes_ago">Sent %1$d min ago</string>
+    <string name="status_im_safe">I\'m safe now</string>
+    <string name="status_im_safe_confirm_title">Mark yourself safe?</string>
+    <string name="status_im_safe_confirm_body">This stops your signal from broadcasting further. Devices that already relayed it can\'t be told to stop.</string>
+    <string name="status_im_safe_confirm_yes">Yes, I\'m safe</string>
+    <string name="status_im_safe_confirm_no">Keep broadcasting</string>
+    <string name="status_add_detail">Add a detail</string>
+
+    <!-- Bluetooth / permission edge states -->
+    <string name="bluetooth_off_title">Bluetooth is off</string>
+    <string name="bluetooth_off_action">Tap to turn on</string>
+    <string name="permission_needed_title">Permission needed</string>
+    <string name="permission_needed_body">Spandan needs Bluetooth permission to send and relay signals.</string>
+    <string name="permission_needed_action">Grant permission</string>
 </resources>
